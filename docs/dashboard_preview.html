@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>תצוגה מקדימה — דשבורד מעלית RFID (על ה-Pi)</title>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;700&display=swap" rel="stylesheet">
+<style>
+/* === מועתק מ-installer/static/style.css === */
+:root{--primary:#2563eb;--primary-dark:#1e40af;--success:#10b981;--danger:#ef4444;--warn:#f59e0b;--bg:#0f172a;--panel:#1e293b;--panel2:#334155;--text:#e2e8f0;--muted:#94a3b8;--border:#334155;}
+*{box-sizing:border-box;}
+body{margin:0;font-family:'Heebo',Arial,sans-serif;background:var(--bg);color:var(--text);direction:rtl;}
+header{background:var(--panel);padding:14px 24px;display:flex;align-items:center;gap:20px;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;}
+header .brand{font-weight:700;font-size:1.15rem;}
+header nav{display:flex;gap:6px;}
+header nav a{color:var(--muted);text-decoration:none;padding:8px 14px;border-radius:8px;transition:.2s;}
+header nav a:hover,header nav a.active{background:var(--panel2);color:#fff;}
+main{max-width:920px;margin:24px auto;padding:0 20px;}
+h1,h2,h3{color:#fff;}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:20px;}
+button{background:var(--primary);color:#fff;border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:600;font-size:.95rem;transition:.2s;}
+button:hover{background:var(--primary-dark);}
+button.secondary{background:var(--panel2);}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;}
+.muted{color:var(--muted);font-size:.88rem;}
+.pill{padding:2px 10px;border-radius:999px;font-size:.8rem;font-weight:700;}
+.pill.ok{background:#064e3b;color:#6ee7b7;}
+.pill.bad{background:#7f1d1d;color:#fca5a5;}
+.pill.warn{background:#78350f;color:#fcd34d;}
+.log{background:#000;color:#d4d4d4;font-family:monospace;font-size:.82rem;padding:14px;border-radius:10px;height:320px;overflow-y:auto;direction:ltr;text-align:left;white-space:pre-wrap;}
+.log .ok{color:#6ee7b7;}.log .error{color:#fca5a5;}.log .warn{color:#fcd34d;}.log .step{color:#93c5fd;font-weight:bold;}
+.section-title{border-bottom:1px solid var(--border);padding-bottom:8px;margin-top:4px;}
+.status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;}
+.kv{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1e293b;}
+.preview-note{max-width:920px;margin:18px auto 0;padding:10px 16px;background:#1e3a8a33;border:1px dashed #2563eb;border-radius:10px;color:#bfdbfe;font-size:.85rem;}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">🛗 מעלית RFID</div>
+  <nav>
+    <a href="#" data-page="wizard">אשף התקנה</a>
+    <a href="#" data-page="config">הגדרה</a>
+    <a href="#" data-page="dashboard" class="active">דשבורד</a>
+  </nav>
+</header>
+
+<div class="preview-note">⚠️ תצוגה מקדימה סטטית עם נתוני דוגמה — בפועל הנתונים נטענים חי מ-Firebase ומ-systemd על ה-Pi (רענון כל 5 שניות).</div>
+
+<main>
+<h1>דשבורד ניהול</h1>
+
+<div class="card">
+  <h3 class="section-title">שירותים</h3>
+  <div class="status-grid">
+    <div class="card" style="margin:0;">
+      <div class="kv"><b>דרייבר</b> <span class="pill ok">פעיל</span></div>
+      <div class="kv"><span class="muted">enabled</span><span>true</span></div>
+      <div class="btn-row"><button>restart</button><button class="secondary">stop</button><button class="secondary">start</button></div>
+    </div>
+    <div class="card" style="margin:0;">
+      <div class="kv"><b>Tracker</b> <span class="pill ok">פעיל</span></div>
+      <div class="kv"><span class="muted">enabled</span><span>true</span></div>
+      <div class="btn-row"><button>restart</button><button class="secondary">stop</button><button class="secondary">start</button></div>
+    </div>
+    <div class="card" style="margin:0;">
+      <div class="kv"><b>Detector</b> <span class="pill ok">פעיל</span></div>
+      <div class="kv"><span class="muted">enabled</span><span>true</span></div>
+      <div class="btn-row"><button>restart</button><button class="secondary">stop</button><button class="secondary">start</button></div>
+    </div>
+  </div>
+  <div class="btn-row">
+    <button class="secondary">⬇️ עדכן מגיט והפעל מחדש</button>
+  </div>
+</div>
+
+<div class="card">
+  <h3 class="section-title">מצב חי (Firebase)</h3>
+  <div id="live">
+    <div class="kv"><span>מעלית</span><b>A</b></div>
+    <div class="kv"><span>מצב FSM</span><b>SHABBAT</b></div>
+    <div class="kv"><span>SHABBAT_ACTIVE</span><span class="pill ok">true</span></div>
+    <div class="kv"><span>קומה נוכחית</span><b>2</b></div>
+    <div class="kv"><span>סיבת מעבר אחרון</span><span class="muted">hebcal_gate: שבת נכנסה 19:14</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3 class="section-title">Raspberry Pi Connect</h3>
+  <div id="rpiConnect"><span class="pill ok">מחובר</span></div>
+  <div class="btn-row">
+    <button>🔗 התחבר ל-RPi Connect</button>
+  </div>
+  <div class="muted" style="margin-top:8px;"></div>
+</div>
+
+<div class="card">
+  <h3 class="section-title">לוגים אחרונים</h3>
+  <div class="btn-row">
+    <button class="secondary">detector</button>
+    <button class="secondary">tracker</button>
+  </div>
+  <div class="log" style="margin-top:10px;"><span class="step">[19:14:02] hebcal_gate: Shabbat window OPEN → SHABBAT_ACTIVE=true</span>
+<span class="ok">[19:14:02] firebase PATCH /elevator_configs/A ok</span>
+[19:15:33] floor event: floor=2 (tag 00E2004707DCD0...)
+[19:16:01] CycleAnalyzer: dwell=26s @floor 2 → emit visit event
+<span class="warn">[19:16:40] notifier: telegram send skipped (events.shabbat_enter already sent)</span>
+[19:18:12] floor event: floor=0 (tag 00E2004707DC50...)
+<span class="ok">[19:18:12] firebase PATCH /elevators/A floor=0 ok</span>
+[19:20:05] MovementWatchdog: daytime idle 00:01:53 (threshold 10:00:00)
+</div>
+</div>
+</main>
+</body>
+</html>
