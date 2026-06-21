@@ -458,9 +458,88 @@ class Installer:
             if tracker_was_active:
                 self._systemctl("start", SERVICE_TRACKER)
 
+    # ── Raspberry Pi Connect ──────────────────────────────────────────────────
+    def _user_cmd(self, args: list[str]) -> list[str]:
+        """עוטף פקודה כך שתרוץ בהקשר ה-user (נדרש ל-rpi-connect שהוא user-service)."""
+        try:
+            uid = pwd.getpwnam(self.env.user).pw_uid
+        except KeyError:
+            uid = os.getuid()
+        return ["sudo", "-u", self.env.user, "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", *args]
+
+    def install_rpi_connect(self, lite: bool = False) -> StepResult:
+        """מתקין ומפעיל Raspberry Pi Connect (ההתחברות עצמה — signin — נפרדת)."""
+        self.emit("מתקין ומפעיל Raspberry Pi Connect…", "step")
+        if not self._require_root():
+            return StepResult("rpi_connect", False, "no root")
+        pkg = "rpi-connect-lite" if lite else "rpi-connect"
+        try:
+            self._run(["apt-get", "install", "-y", pkg])
+        except subprocess.CalledProcessError as e:
+            return StepResult("rpi_connect", False, e.stderr or str(e))
+        # linger כדי שה-user service ירוץ גם ללא התחברות אינטראקטיבית של המשתמש.
+        self._run(["loginctl", "enable-linger", self.env.user], check=False)
+        # הפעלה עבור המשתמש (מפעיל את rpi-connect.service ב-user systemd).
+        self._run(self._user_cmd(["rpi-connect", "on"]), check=False)
+        self.emit("rpi-connect מותקן ופעיל — נותרה התחברות חד-פעמית (signin).", "ok")
+        return StepResult("rpi_connect", True)
+
+    def rpi_connect_status(self) -> dict:
+        """{installed, signed_in, raw} — לתצוגה בדשבורד."""
+        if self.dry_run:
+            return {"installed": True, "signed_in": False, "raw": "DRY-RUN"}
+        if not shutil.which("rpi-connect"):
+            return {"installed": False, "signed_in": False, "raw": ""}
+        try:
+            out = subprocess.run(self._user_cmd(["rpi-connect", "status"]),
+                                 capture_output=True, text=True, timeout=10).stdout
+        except Exception as e:
+            return {"installed": True, "signed_in": False, "raw": str(e)}
+        low = out.lower()
+        signed = "signed in: yes" in low or ("signed in" in low and "not signed in" not in low)
+        return {"installed": True, "signed_in": signed, "raw": out.strip()}
+
+    def rpi_connect_signin_url(self, wait_s: float = 25) -> Optional[str]:
+        """מתחיל signin ומחזיר את קישור האימות (התהליך ממשיך לרוץ עד שתאשר בדפדפן)."""
+        if self.dry_run:
+            return "https://connect.raspberrypi.com/verify/DRYR-UN00"
+        if not shutil.which("rpi-connect"):
+            return None
+        import re
+        proc = subprocess.Popen(self._user_cmd(["rpi-connect", "signin"]),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        pat = re.compile(r"https://connect\.raspberrypi\.com/\S+")
+        deadline = time.time() + wait_s
+        while time.time() < deadline:
+            line = proc.stdout.readline() if proc.stdout else ""
+            if not line:
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.1)
+                continue
+            m = pat.search(line)
+            if m:
+                return m.group(0)  # משאירים את התהליך רץ כדי להשלים את האימות
+        return None
+
+    def rpi_connect_signin_foreground(self) -> None:
+        """הרצת signin בטרמינל (CLI) — מציג את הקישור וממתין לאישור בדפדפן."""
+        if self.dry_run:
+            self.emit("DRY-RUN: rpi-connect signin", "dry")
+            return
+        if not shutil.which("rpi-connect"):
+            self.emit("rpi-connect לא מותקן — מדלג על ההתחברות.", "warn")
+            return
+        self.emit("התחברות ל-RPi Connect — פתח את הקישור שיוצג ואשר בחשבון ה-Raspberry Pi:", "step")
+        try:
+            subprocess.run(self._user_cmd(["rpi-connect", "signin"]))
+        except KeyboardInterrupt:
+            self.emit("דילגת. אפשר להתחבר אחר כך: rpi-connect signin", "warn")
+
     # ── התקנה מלאה בסדר הנכון ─────────────────────────────────────────────────
     def install_all(self, settings: dict, tags: dict,
-                    notifications: Optional[dict] = None) -> list[StepResult]:
+                    notifications: Optional[dict] = None,
+                    rpi_connect: bool = True, rpi_connect_lite: bool = False) -> list[StepResult]:
         results = [
             self.install_system_packages(),
             self.install_cp210x_driver(),
@@ -470,6 +549,8 @@ class Installer:
             self.write_config(settings, tags, notifications),
             self.install_services(),
             self.install_desktop_shortcut(),
-            self.start_services(),
         ]
+        if rpi_connect:
+            results.append(self.install_rpi_connect(lite=rpi_connect_lite))
+        results.append(self.start_services())
         return results

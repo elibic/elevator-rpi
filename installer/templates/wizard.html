@@ -17,8 +17,10 @@
   <div class="btn-row">
     <button onclick="startInstall(this)">🚀 התקן הכל</button>
     <button class="secondary" onclick="saveOnly(this)">שמור הגדרות בלבד</button>
+    <button class="secondary" onclick="rpiSignin(this)">🔗 התחבר ל-RPi Connect</button>
   </div>
   <div class="log" id="log" style="margin-top:14px;"></div>
+  <div id="rpiLinkBox" class="muted" style="margin-top:8px;"></div>
 </div>
 {% endblock %}
 
@@ -59,6 +61,19 @@ async function saveOnly(btn) {
     body: JSON.stringify(readForm()),
   });
   toast(r.ok ? 'נשמר ✓' : 'שגיאה: ' + r.detail);
+  btn.disabled = false;
+}
+async function rpiSignin(btn) {
+  btn.disabled = true;
+  const box = document.getElementById('rpiLinkBox');
+  box.textContent = 'מתחיל התחברות ל-RPi Connect… (עד 25 שניות)';
+  const r = await api('/api/rpi-connect/signin', { method: 'POST' });
+  if (r.url) {
+    box.innerHTML = 'פתח ואשר בחשבון ה-Raspberry Pi:<br>' + `<a href="${r.url}" target="_blank">${r.url}</a>`;
+    window.open(r.url, '_blank');
+  } else {
+    box.textContent = 'לא התקבל קישור (אולי כבר מחובר, או rpi-connect לא מותקן).';
+  }
   btn.disabled = false;
 }
 loadEnv(); loadConfigForm();

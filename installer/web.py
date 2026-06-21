@@ -190,6 +190,17 @@ def api_notify_test():
     return jsonify({"results": notifier.send_test()})
 
 
+@app.route("/api/rpi-connect/status")
+def api_rpi_connect_status():
+    return jsonify(_installer().rpi_connect_status())
+
+
+@app.route("/api/rpi-connect/signin", methods=["POST"])
+def api_rpi_connect_signin():
+    url = _installer().rpi_connect_signin_url()
+    return jsonify({"url": url})
+
+
 @app.route("/api/logs")
 def api_logs():
     env = _state["env"]

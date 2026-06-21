@@ -18,6 +18,16 @@
 </div>
 
 <div class="card">
+  <h3 class="section-title">Raspberry Pi Connect</h3>
+  <div id="rpiConnect" class="muted">טוען…</div>
+  <div class="btn-row">
+    <button onclick="rpiSignin(this)">🔗 התחבר ל-RPi Connect</button>
+    <a id="rpiLink" href="#" target="_blank" style="display:none;"></a>
+  </div>
+  <div id="rpiLinkBox" class="muted" style="margin-top:8px;"></div>
+</div>
+
+<div class="card">
   <h3 class="section-title">לוגים אחרונים</h3>
   <div class="btn-row">
     <button class="secondary" onclick="showLog('detector')">detector</button>
@@ -77,6 +87,30 @@ async function showLog(which) {
   v.textContent = (logs[which] || []).join('');
   v.scrollTop = v.scrollHeight;
 }
+async function refreshRpi() {
+  try {
+    const s = await api('/api/rpi-connect/status');
+    const el = document.getElementById('rpiConnect');
+    if (!s.installed) el.innerHTML = '<span class="pill warn">לא מותקן</span>';
+    else if (s.signed_in) el.innerHTML = '<span class="pill ok">מחובר</span>';
+    else el.innerHTML = '<span class="pill warn">מותקן — לא מחובר</span>';
+  } catch (e) {}
+}
+async function rpiSignin(btn) {
+  btn.disabled = true;
+  document.getElementById('rpiLinkBox').textContent = 'מתחיל התחברות… (עד 25 שניות)';
+  const r = await api('/api/rpi-connect/signin', { method: 'POST' });
+  const box = document.getElementById('rpiLinkBox');
+  if (r.url) {
+    box.innerHTML = 'פתח את הקישור ואשר בחשבון ה-Raspberry Pi שלך:<br>' +
+      `<a href="${r.url}" target="_blank">${r.url}</a>`;
+    window.open(r.url, '_blank');
+  } else {
+    box.textContent = 'לא התקבל קישור (אולי כבר מחובר, או rpi-connect לא מותקן).';
+  }
+  btn.disabled = false; setTimeout(refreshRpi, 3000);
+}
 refresh(); setInterval(refresh, 5000); showLog('detector');
+refreshRpi(); setInterval(refreshRpi, 10000);
 </script>
 {% endblock %}

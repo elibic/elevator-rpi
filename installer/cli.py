@@ -154,5 +154,14 @@ def run_cli(dry_run: bool = False, mock_serial: bool = False) -> None:
     print(f"\n{GREEN}{BOLD}✓ ההתקנה הושלמה!{RESET}")
     for st in inst.all_status():
         print(f"   {st['service']}: active={st['active']} enabled={st['enabled']}")
+
+    # ── Raspberry Pi Connect — התחברות חד-פעמית בסוף ──
+    print(f"\n{CYAN}{BOLD}── Raspberry Pi Connect ──{RESET}")
+    cs = inst.rpi_connect_status()
+    if cs.get("signed_in"):
+        print(f"{GREEN}כבר מחובר ל-RPi Connect ✓{RESET}")
+    elif _ask_yes("להתחבר עכשיו ל-RPi Connect?", default=True):
+        inst.rpi_connect_signin_foreground()
+
     print(f"\n{DIM}ניטור: python monitor.py --watch   |   לוגים: journalctl -u shabbat-detector -f{RESET}")
     print(f"{DIM}כלי גרפי: sudo ./setup.sh --web{RESET}")
