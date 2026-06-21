@@ -1,0 +1,20 @@
+{
+  "_comment": "תבנית לדוגמה. העתק לקובץ rfid_config.json ומלא ערכים אמיתיים. אל תעלה את rfid_config.json ל-Git!",
+  "tags": {
+    "00E2004707DC5060270EA801": "0",
+    "00E28011704000021CEE45EB": "1",
+    "00E2004707DCD060270EB001": "2",
+    "00E2004707DD1060270EB401": "3"
+  },
+  "settings": {
+    "SERIAL_PORT": "/dev/ttyUSB0",
+    "BAUDRATE": 115200,
+    "CONFIRMATION_TIME": 0.0,
+    "STOPPED_TIMEOUT": 30000,
+    "RF_POWER": "23.0",
+    "ELEVATOR_ID": "A",
+    "FIREBASE_URL": "https://YOUR-PROJECT-default-rtdb.firebaseio.com/elevators.json",
+    "SECRET_KEY": "PUT-YOUR-SECRET-KEY-HERE",
+    "TIME_PER_FLOOR": 30
+  }
+}

@@ -1,0 +1,23 @@
+[Unit]
+Description=Shabbat Elevator Detector — behavioral Shabbat-mode detection
+Documentation=https://github.com/ramada-elev/shabbat_detector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=eco
+WorkingDirectory=/home/eco/elevator-RFID
+ExecStart=/home/eco/elevator-RFID/venv/bin/python -m shabbat_detector.detector \
+    --config /home/eco/elevator-RFID/rfid_config.json
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shabbat-detector
+
+# State dir must exist; created by install.sh
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
