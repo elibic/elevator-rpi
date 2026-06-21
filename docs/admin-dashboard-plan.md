@@ -3,8 +3,9 @@
 > מסמך handoff — מרכז את כל ההחלטות והארכיטקטורה שסוכמו, כדי שאפשר יהיה להמשיך
 > בכל סשן חדש. בסשן חדש: *"קרא את `docs/admin-dashboard-plan.md` ותמשיך"*.
 >
-> **סטטוס: תכנון בלבד. טרם התחילה בנייה.** ממתינים לצירוף `ramada-web` ל-scope
-> ולקבלת ה-config של פרויקט ה-Firebase של האדמין.
+> **סטטוס:** חלק 2 (צד ה-Pi: דיווח גרסה + עדכון מרחוק) **מומש** — ראה
+> [`fleet-remote-update.md`](fleet-remote-update.md). חלקים 1 (דשבורד `ramada-admin`)
+> ו-3 עדיין פתוחים. ה-config של האדמין (`econtrolelevelev`) התקבל ו-`ramada-web` ב-scope.
 
 ---
 
@@ -50,15 +51,17 @@
   ⬆️ "עדכן עכשיו" → כותב פקודת עדכון ל-Firebase של הפרויקט.
 - **"הוסף פרויקט"**: טופס שמדביקים בו את ה-web config + subdomain → נשמר ל-`/projects`.
 
-### 2) `elevator-rpi` (הריפו הזה) — צד ה-Pi לעדכון מרחוק
-מתבסס על המודל הקיים (`secret_key` ב-PATCH, SSE streams ב-`firebase_client.py`):
+### 2) `elevator-rpi` (הריפו הזה) — צד ה-Pi לעדכון מרחוק  ✅ מומש
+מומש ב-[`shabbat_detector/fleet_agent.py`](../shabbat_detector/fleet_agent.py)
+(משולב ב-`detector.py`, רץ ב-thread-ים ברקע). תיעוד מלא + חוקי-RTDB:
+[`fleet-remote-update.md`](fleet-remote-update.md).
 - **דיווח גרסה**: בהפעלה + כל ~5 דק', `PATCH /fleet/{ELEVATOR_ID}` עם
-  `{version: <git sha>, last_seen, status:"online"}` + `secret_key`.
-- **watcher לעדכון**: stream על `/fleet/{ELEVATOR_ID}/command`; כשמגיע
-  `{action:"update", secret_key, requested_at}` → מאמת secret →
-  `git pull` + `systemctl restart shabbat-detector` → מדווח תוצאה חזרה ל-`/fleet/{id}`.
-- ⚠️ אבטחה: ה-Pi מריץ קוד לפי טריגר מרוחק — חייב לאמת `secret_key` לפני כל פעולה
-  (זהה למודל ה-PATCH הקיים). **ממתין לאישור סופי של המודל הזה לפני בנייה.**
+  `{version: <git sha>, branch, last_seen, status:"online"}` + `secret_key`.
+- **watcher לעדכון**: stream על `/fleet/{ELEVATOR_ID}/command`; על
+  `{action:"update", secret_key, requested_at}` → אימות secret (constant-time) +
+  idempotency → `git pull --ff-only` → יציאה מבוקרת ⇐ systemd (`Restart=always`)
+  מפעיל מחדש עם הקוד החדש (ללא sudo) → מדווח תוצאה ל-`/fleet/{id}`.
+- ⚠️ אבטחה: אימות `secret_key` לפני כל פעולה; חוקי-ה-RTDB הנדרשים מתועדים ב-fleet-remote-update.md.
 
 ### 3) `ramada-web` — כמעט כלום
 רק לאמת את הנתיב המדויק של דף ההגדרות (`/setup`) ואת מבנה ה-Firebase config של פרויקט.
@@ -84,11 +87,11 @@
 - **זיהוי "Pi מת/offline" חייב להיות בצד האדמין** (Cloud Function) — Pi שנפל לא מדווח על עצמו.
 
 ## 🔑 מה צריך כדי להתחיל לבנות
-1. **config של פרויקט ה-Firebase של האדמין** (apiKey, authDomain, databaseURL, projectId...) —
-   או לבנות עם placeholders ולמלא.
-2. **לצרף `elibic/ramada-web` ל-scope** של הסשן (דרך "Edit environment" / New session).
-3. **אישור סופי על מודל ה-`secret_key`** לעדכון מרחוק.
-4. **היכן ייווצר הריפו `ramada-admin`** (כנראה `elibic/ramada-admin`).
+1. ✅ **config של פרויקט ה-Firebase של האדמין** — התקבל: `econtrolelevelev`
+   (חסר `databaseURL` — להוסיף אם האדמין משתמש ב-RTDB).
+2. ✅ **`elibic/ramada-web` ב-scope** של הסשן (אומת `/setup`→`setup.html` דרך `cleanUrls`).
+3. ✅ **מודל ה-`secret_key` לעדכון מרחוק** — מומש (חלק 2); חוקי-RTDB ב-fleet-remote-update.md.
+4. ⏳ **היכן ייווצר הריפו `ramada-admin`** (כנראה `elibic/ramada-admin`).
 
 ## 📁 קבצים רלוונטיים ב-elevator-rpi (להתמצאות מהירה)
 - `shabbat_detector/firebase_client.py` — wrapper ל-Firebase RTDB REST (SSE streams + PATCH/POST).
@@ -100,5 +103,7 @@
 - שירות systemd: `shabbat-detector`.
 
 ## ▶️ הצעד הבא
-כשהסקופ יורחב ויתקבלו האישורים: להתחיל מחלק 2 (צד ה-Pi) — בתוך הריפו הזה, מוגדר היטב,
-ופותח את כל השאר. במקביל לפתוח את `ramada-admin` (חלק 1).
+חלק 2 (צד ה-Pi) **מומש ונבדק** (14 unit-tests ב-`tests/test_fleet_agent.py`).
+הבא בתור: לפתוח את `ramada-admin` (חלק 1) — דשבורד מול `econtrolelevelev` שקורא
+`/fleet/{id}` מכל פרויקט ושולח פקודות-עדכון לפי הפרוטוקול ב-fleet-remote-update.md.
+דרושה הכרעה היכן ייווצר הריפו (ראה "מה צריך כדי להתחיל", סעיף 4).

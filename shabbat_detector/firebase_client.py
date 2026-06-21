@@ -93,6 +93,20 @@ class FirebaseClient:
         )
         t.start()
 
+    def subscribe_fleet_command(self, callback) -> None:
+        """Background thread that streams /fleet/{id}/command and calls callback(command_dict).
+
+        Used by FleetAgent for remote-update commands. The callback only fires for
+        non-empty dict payloads (a cleared command node is filtered out upstream).
+        """
+        t = threading.Thread(
+            target=self._stream_loop,
+            args=(f"/fleet/{self._elevator_id}/command.json", callback),
+            daemon=True,
+            name=f"fleet-command-stream-{self._elevator_id}",
+        )
+        t.start()
+
     def _on_config_event(self, data: dict) -> None:
         with self._config_lock:
             self._config = data
@@ -165,6 +179,33 @@ class FirebaseClient:
         except Exception as e:
             log.error("Failed to append detector log: %s", e)
             return False
+
+    def patch_fleet_status(self, updates: dict) -> bool:
+        """PATCH /fleet/{id} with the given fields (+ secret_key).
+
+        Used by FleetAgent for version/status reporting and update results.
+        Same secret_key model as patch_elevator_config.
+        """
+        url = f"{self._base}/fleet/{self._elevator_id}.json"
+        payload = {**updates, "secret_key": self._key}
+        try:
+            r = requests.patch(url, data=json.dumps(payload), timeout=10)
+            r.raise_for_status()
+            return True
+        except Exception as e:
+            log.error("Failed to patch fleet status: %s", e)
+            return False
+
+    def get_fleet_status(self) -> dict:
+        """One-shot GET of /fleet/{id} (used to seed remote-update idempotency)."""
+        url = f"{self._base}/fleet/{self._elevator_id}.json"
+        try:
+            r = requests.get(url, timeout=10)
+            r.raise_for_status()
+            return r.json() or {}
+        except Exception as e:
+            log.error("Failed to fetch fleet status: %s", e)
+            return {}
 
     # ── Internal SSE helpers ──────────────────────────────────────────────────
 

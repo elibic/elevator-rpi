@@ -35,6 +35,7 @@ def _is_valid_floor(s) -> bool:
 from .auto_learner import AutoLearner
 from .cycle_analyzer import Cycle, CycleAnalyzer, FloorEvent
 from .firebase_client import FirebaseClient
+from .fleet_agent import FleetAgent
 from .fsm import DetectorState, ElevatorFSM, FSMResult, Violation, _TIME_SCALE
 from .hebcal_gate import HebcalGate
 from .notifier import MovementWatchdog, Notifier
@@ -493,6 +494,19 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
 
     watchdog_thread = threading.Thread(target=_watchdog_loop, daemon=True, name="inactivity-watchdog")
     watchdog_thread.start()
+
+    # ── Fleet agent: version reporting + remote update (Part 2) ───────────────
+    # Reports {version, status, last_seen} to /fleet/{id} and listens for remote
+    # `update` commands. Disabled under --test-mode. See docs/fleet-remote-update.md.
+    if not test_mode and _s.get("FLEET_AGENT_ENABLED", True):
+        FleetAgent(
+            fb,
+            secret_key=secret_key,
+            report_interval=float(_s.get("FLEET_REPORT_INTERVAL", 300)),
+            remote_update_enabled=bool(_s.get("FLEET_REMOTE_UPDATE_ENABLED", True)),
+            require_command_secret=bool(_s.get("FLEET_REQUIRE_COMMAND_SECRET", True)),
+            update_branch=_s.get("FLEET_UPDATE_BRANCH") or None,
+        ).start()
 
     # ── Main event loop ───────────────────────────────────────────────────────
     log.info("Listening for elevator events...")
