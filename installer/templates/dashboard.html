@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}דשבורד — מעלית RFID{% endblock %}
+{% block page %}dashboard{% endblock %}
+{% block content %}
+<h1>דשבורד ניהול</h1>
+
+<div class="card">
+  <h3 class="section-title">שירותים</h3>
+  <div class="status-grid" id="services">טוען…</div>
+  <div class="btn-row">
+    <button class="secondary" onclick="updateGit(this)">⬇️ עדכן מגיט והפעל מחדש</button>
+  </div>
+</div>
+
+<div class="card">
+  <h3 class="section-title">מצב חי (Firebase)</h3>
+  <div id="live" class="muted">טוען…</div>
+</div>
+
+<div class="card">
+  <h3 class="section-title">לוגים אחרונים</h3>
+  <div class="btn-row">
+    <button class="secondary" onclick="showLog('detector')">detector</button>
+    <button class="secondary" onclick="showLog('tracker')">tracker</button>
+  </div>
+  <div class="log" id="logView" style="margin-top:10px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SERVICES = { 'fix_cp210x': 'דרייבר', 'rfid-tracker': 'Tracker', 'shabbat-detector': 'Detector' };
+
+function pill(active) {
+  return active === 'active' ? '<span class="pill ok">פעיל</span>'
+       : '<span class="pill bad">' + active + '</span>';
+}
+async function refresh() {
+  const st = await api('/api/status');
+  document.getElementById('services').innerHTML = (st.services || []).map(s => `
+    <div class="card" style="margin:0;">
+      <div class="kv"><b>${SERVICES[s.service] || s.service}</b> ${pill(s.active)}</div>
+      <div class="kv"><span class="muted">enabled</span><span>${s.enabled}</span></div>
+      <div class="btn-row">
+        <button onclick="svc('${s.service}','restart')">restart</button>
+        <button class="secondary" onclick="svc('${s.service}','stop')">stop</button>
+        <button class="secondary" onclick="svc('${s.service}','start')">start</button>
+      </div>
+    </div>`).join('');
+
+  const live = st.live || {};
+  const cfg = live.config || {}, elv = live.elevator || {}, sd = cfg.SHABBAT_DETECTOR || {};
+  if (st.live_error) {
+    document.getElementById('live').textContent = 'שגיאת חיבור: ' + st.live_error;
+  } else {
+    document.getElementById('live').innerHTML = `
+      <div class="kv"><span>מעלית</span><b>${st.elevator_id || '?'}</b></div>
+      <div class="kv"><span>מצב FSM</span><b>${sd.state || 'NORMAL'}</b></div>
+      <div class="kv"><span>SHABBAT_ACTIVE</span>${cfg.SHABBAT_ACTIVE ? '<span class="pill ok">true</span>' : '<span class="pill warn">false</span>'}</div>
+      <div class="kv"><span>קומה נוכחית</span><b>${elv.floor ?? '?'}</b></div>
+      <div class="kv"><span>סיבת מעבר אחרון</span><span class="muted">${sd.last_transition_reason || '—'}</span></div>`;
+  }
+}
+async function svc(name, action) {
+  await api('/api/service/' + name + '/' + action, { method: 'POST' });
+  toast(name + ' → ' + action); setTimeout(refresh, 800);
+}
+async function updateGit(btn) {
+  btn.disabled = true; toast('מושך מגיט…');
+  const r = await api('/api/update-git', { method: 'POST' });
+  toast(r.ok ? 'עודכן והופעל מחדש ✓' : 'שגיאה: ' + r.detail);
+  btn.disabled = false; setTimeout(refresh, 1500);
+}
+async function showLog(which) {
+  const logs = await api('/api/logs');
+  const v = document.getElementById('logView');
+  v.textContent = (logs[which] || []).join('');
+  v.scrollTop = v.scrollHeight;
+}
+refresh(); setInterval(refresh, 5000); showLog('detector');
+</script>
+{% endblock %}

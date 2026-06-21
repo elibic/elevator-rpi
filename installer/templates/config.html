@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}הגדרה — מעלית RFID{% endblock %}
+{% block page %}config{% endblock %}
+{% block content %}
+<h1>הגדרה</h1>
+
+{% include "_config_form.html" %}
+
+<div class="card">
+  <div class="btn-row">
+    <button class="success" onclick="saveConfig(this)">💾 שמור הגדרות</button>
+    <button class="secondary" onclick="testNotify(this)">🔔 שלח התראת בדיקה</button>
+  </div>
+  <div id="testResult" class="muted" style="margin-top:10px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='configform.js') }}"></script>
+<script>
+async function saveConfig(btn) {
+  btn.disabled = true;
+  const r = await api('/api/config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(readForm()),
+  });
+  toast(r.ok ? 'נשמר ✓' : 'שגיאה: ' + r.detail);
+  btn.disabled = false;
+}
+async function testNotify(btn) {
+  btn.disabled = true;
+  document.getElementById('testResult').textContent = 'שולח…';
+  const r = await api('/api/notify-test', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notifications: readForm().notifications }),
+  });
+  document.getElementById('testResult').innerHTML = (r.results || [])
+    .map(x => `${x.channel}: ${x.ok ? '<span class="pill ok">נשלח</span>' : '<span class="pill bad">' + x.error + '</span>'}`)
+    .join(' &nbsp; ');
+  btn.disabled = false;
+}
+loadConfigForm();
+</script>
+{% endblock %}

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}מעלית RFID{% endblock %}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <div class="brand">🛗 מעלית RFID</div>
+    <nav>
+      <a href="/" data-page="wizard">אשף התקנה</a>
+      <a href="/config" data-page="config">הגדרה</a>
+      <a href="/dashboard" data-page="dashboard">דשבורד</a>
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <div class="toast" id="toast"></div>
+  <script>
+    const page = "{% block page %}{% endblock %}";
+    document.querySelectorAll('nav a').forEach(a => {
+      if (a.dataset.page === page) a.classList.add('active');
+    });
+    function toast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg; t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2600);
+    }
+    async function api(url, opts) {
+      const r = await fetch(url, opts);
+      return await r.json();
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

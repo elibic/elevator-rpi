@@ -2,6 +2,9 @@ import serial
 import time
 import json
 
+# שימוש חוזר בלוגיקת הסריקה המשותפת (מקור אמת אחד לפרוטוקול הקורא).
+from installer.rfid_scan import read_one_tag
+
 CONFIG_FILE = 'rfid_config.json'
 
 def load_or_create_config():
@@ -35,7 +38,6 @@ def main():
     settings = config.get('settings', {})
     serial_port = settings.get('SERIAL_PORT', '/dev/ttyUSB0')
     baudrate = settings.get('BAUDRATE', 115200)
-    inventory_cmd = b'\xBB\x00\x22\x00\x00\x22\x7E'
 
     print("--- RFID Tag Mapper ---")
     print("Scan a tag to begin. Press Ctrl+C to exit.")
@@ -48,13 +50,9 @@ def main():
 
     try:
         while True:
-            ser.write(inventory_cmd)
-            resp = ser.read(64)
+            epc_hex = read_one_tag(ser)
 
-            if resp and resp.startswith(b'\xBB\x02\x22'):
-                tag_bytes = resp[7:19]
-                epc_hex = ''.join(f"{b:02X}" for b in tag_bytes)
-
+            if epc_hex:
                 if epc_hex not in mapped_tags:
                     print(f"\n--- New Tag Detected ---")
                     print(f"  ID: {epc_hex}")
