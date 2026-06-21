@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>מדריך התקנה — מעלית RFID</title>
+<style>
+  :root { --primary:#2563eb; --dark:#1e3a8a; --ok:#10b981; --warn:#f59e0b; --bg:#f8fafc; --code:#1e1e1e; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: var(--bg); color: #1e293b;
+         max-width: 820px; margin: 0 auto; padding: 30px 22px 80px; line-height: 1.7; }
+  h1 { color: var(--dark); border-bottom: 3px solid var(--primary); padding-bottom: 10px; }
+  h2 { color: var(--dark); margin-top: 34px; display: flex; align-items: center; gap: 10px; }
+  .num { background: var(--primary); color: #fff; width: 34px; height: 34px; border-radius: 50%;
+         display: inline-flex; align-items: center; justify-content: center; font-size: 1rem; flex: none; }
+  code { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-family: Consolas, monospace; direction: ltr; display: inline-block; }
+  pre { background: var(--code); color: #d4d4d4; padding: 14px 16px; border-radius: 10px;
+        overflow-x: auto; direction: ltr; text-align: left; }
+  pre code { background: none; color: inherit; padding: 0; }
+  .note { background: #fff7ed; border-right: 5px solid var(--warn); padding: 12px 16px; border-radius: 6px; margin: 14px 0; }
+  .ok   { background: #ecfdf5; border-right: 5px solid var(--ok);   padding: 12px 16px; border-radius: 6px; margin: 14px 0; }
+  .info { background: #eff6ff; border-right: 5px solid var(--primary); padding: 12px 16px; border-radius: 6px; margin: 14px 0; }
+  ol, ul { padding-right: 22px; }
+  .print-btn { position: fixed; bottom: 20px; left: 20px; background: var(--primary); color: #fff;
+               border: none; padding: 12px 20px; border-radius: 10px; font-size: 1rem; cursor: pointer; box-shadow: 0 4px 14px #0003; }
+  .check { color: var(--ok); font-weight: bold; }
+  @media print { .print-btn { display: none; } body { padding: 0; } h2 { page-break-after: avoid; } pre, .note, .ok, .info { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<h1>🛗 מדריך התקנה — מערכת מעלית RFID</h1>
+<p>מדריך מלא להתקנה על Raspberry Pi חדש, בפקודה אחת. זמן משוער: 15–20 דקות.</p>
+
+<div class="info">
+  <b>שלושה דברים שכדאי שיהיו מוכנים לפני שמתחילים:</b>
+  <ol style="margin:6px 0;">
+    <li>כתובת ה-<b>Firebase</b> (ה-URL של מסד הנתונים).</li>
+    <li><b>שם המעלית</b> (ELEVATOR_ID — למשל A או B).</li>
+    <li>ה-<b>SECRET_KEY</b> (מפתח הכתיבה ל-Firebase).</li>
+  </ol>
+</div>
+
+<h2><span class="num">0</span> הכנה</h2>
+<ul>
+  <li>התקן <b>Raspberry Pi OS</b> על כרטיס ה-SD (עם Raspberry Pi Imager), הדלק את ה-Pi.</li>
+  <li>ודא שה-Pi <b>מחובר לאינטרנט</b> (Wi-Fi או כבל רשת).</li>
+  <li>חבר את <b>קורא ה-RFID</b> ליציאת USB.</li>
+</ul>
+
+<h2><span class="num">1</span> יצירת טוקן GitHub (פעם אחת)</h2>
+<p>הריפו פרטי, אז ה-Pi צריך "סיסמה מיוחדת" (טוקן) לקריאה בלבד:</p>
+<ol>
+  <li>GitHub → תמונת הפרופיל (ימין למעלה) → <b>Settings</b>.</li>
+  <li>בתפריט הצד גלול למטה → <b>Developer settings</b>.</li>
+  <li><b>Personal access tokens</b> → <b>Fine-grained tokens</b> → <b>Generate new token</b>.</li>
+  <li>שם: <code>elevator-pi</code> · תוקף: לבחירתך (למשל שנה).</li>
+  <li><b>Repository access</b> → <b>Only select repositories</b> → בחר <code>elevator-rpi</code>.</li>
+  <li><b>Permissions</b> → <b>Repository permissions</b> → <b>Contents</b> → <b>Read-only</b>.</li>
+  <li><b>Generate token</b> → <b>העתק ושמור</b> את הטוקן (מתחיל ב-<code>github_pat_...</code>).</li>
+</ol>
+<div class="note">⚠️ הטוקן מוצג <b>פעם אחת בלבד</b>. שמור אותו במקום בטוח. אם איבדת — פשוט צור חדש.</div>
+
+<h2><span class="num">2</span> הורדת הקוד ל-Pi</h2>
+<p>פתח <b>טרמינל</b> על ה-Pi והקלד (החלף את <code>&lt;TOKEN&gt;</code> בטוקן שלך):</p>
+<pre><code>git clone https://&lt;TOKEN&gt;@github.com/elibic/elevator-rpi.git ~/elevator-RFID
+cd ~/elevator-RFID</code></pre>
+
+<h2><span class="num">3</span> הרצת ההתקנה</h2>
+<p><b>אפשרות א' — אשף בטרמינל:</b></p>
+<pre><code>sudo ./setup.sh</code></pre>
+<p><b>אפשרות ב' — כלי גרפי בדפדפן (מומלץ למתחילים):</b></p>
+<pre><code>sudo ./setup.sh --web</code></pre>
+<div class="ok">
+  הפקודה עושה הכל לבד ובסדר הנכון: מושכת קוד עדכני → דרייבר הקורא (CP210x) → הרשאות →
+  תוכנה ותלויות → שני שירותי הרקע → Raspberry Pi Connect → הפעלה.
+</div>
+
+<h2><span class="num">4</span> מילוי ההגדרות</h2>
+<p>האשף (טרמינל או דפדפן) יבקש:</p>
+<ul>
+  <li><b>FIREBASE_URL</b>, <b>ELEVATOR_ID</b>, <b>SECRET_KEY</b> — מהפרטים שהכנת.</li>
+  <li><b>מיפוי תגים:</b> קרב כל תג RFID לקורא, ולחץ "סרוק תג"/ענה בטרמינל, ואז הקלד את מספר הקומה. חזור לכל התגים.</li>
+  <li><b>התראות (לא חובה):</b> הפעל אם תרצה התראות על כניסה/יציאה משבת או "אין תנועה", ומלא פרטי Telegram/Email.</li>
+</ul>
+
+<h2><span class="num">5</span> חיבור ל-Raspberry Pi Connect</h2>
+<p>בסוף ההתקנה יוצג <b>קישור אימות</b>. פתח אותו בדפדפן ואשר עם חשבון ה-Raspberry Pi שלך.
+מעכשיו אפשר להיכנס ל-Pi מרחוק דרך <code>connect.raspberrypi.com</code>.</p>
+
+<h2><span class="num">6</span> בדיקה וניהול שוטף</h2>
+<ul>
+  <li>בדיקה: <code>python monitor.py --watch</code> — רואים את הקומה והמצב מתעדכנים.</li>
+  <li>על שולחן העבודה נוצר אייקון <b>"הגדרת מעלית RFID"</b> שפותח את הכלי הגרפי (דשבורד: סטטוס, הפעלה/עצירה, לוגים, עדכון מגיט).</li>
+</ul>
+
+<div class="info">
+  <b>עדכון בעתיד:</b> אחרי ששינית קוד ב-GitHub, על ה-Pi פשוט הרץ שוב
+  <code>sudo ./setup.sh</code> (או לחץ "עדכן מגיט" בדשבורד). ההגדרות שלך לא נדרסות.
+</div>
+
+<h2>🛠️ פתרון תקלות</h2>
+<ul>
+  <li><b>הקורא לא מזוהה / אין <code>/dev/ttyUSB0</code>:</b> נתק וחבר מחדש את הקורא, או אתחל את ה-Pi (שירות הדרייבר רץ באתחול).</li>
+  <li><b>שגיאת הרשאה ב-clone:</b> בדוק שהדבקת את הטוקן נכון ושיש לו גישת Read ל-<code>elevator-rpi</code>.</li>
+  <li><b>השירות לא רץ:</b> <code>journalctl -u shabbat-detector -f</code> ו-<code>journalctl -u rfid-tracker -f</code> מראים מה קורה.</li>
+</ul>
+
+<button class="print-btn" onclick="window.print()">🖨️ הדפס / שמור כ-PDF</button>
+</body>
+</html>
