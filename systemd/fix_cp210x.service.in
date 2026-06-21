@@ -1,0 +1,10 @@
+[Unit]
+Description=Fix cp210x RFID USB ID (bind 1560:0003 to the in-kernel driver)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/fix_cp210x.sh
+
+[Install]
+WantedBy=multi-user.target

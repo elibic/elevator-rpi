@@ -1,35 +1,66 @@
 # Elevator RPi
 
-קוד ה-Raspberry Pi למערכת מעלית שבת — קריאת תגיות RFID, זיהוי קומות
-ושליחת מצב המעלית ל-Firebase.
+קוד ה-Raspberry Pi למערכת מעלית שבת — קריאת תגיות RFID, זיהוי קומות, זיהוי שבת,
+התראות, ושליחת מצב המעלית ל-Firebase.
 
 ## ⚠️ קונפיג סודי
 
-הקובץ `rfid_config.json` מכיל את `SECRET_KEY` ואת מיפוי התגיות של מעלית מסוימת,
-ולכן **אינו נמצא ב-Git** (ראה `.gitignore`). השתמש ב-`rfid_config.example.json`
-כתבנית.
+הקובץ `rfid_config.json` מכיל את `SECRET_KEY`, מיפוי תגים, וסודות התראות (טוקני
+Telegram / סיסמת SMTP). לכן הוא **אינו ב-Git** (ראה `.gitignore`). השתמש ב-
+`rfid_config.example.json` כתבנית, או מלא דרך הכלי הגרפי.
 
-## התקנה על Pi חדש
+## התקנה בפקודה אחת (Pi נקי)
 
 ```bash
 git clone https://github.com/elibic/elevator-rpi.git ~/elevator-RFID
 cd ~/elevator-RFID
-cp rfid_config.example.json rfid_config.json
-nano rfid_config.json          # מלא SECRET_KEY, FIREBASE_URL, ELEVATOR_ID והתגיות של המעלית
-sudo bash shabbat_detector/install.sh
+sudo ./setup.sh          # אשף טרמינל אינטראקטיבי
+# או:
+sudo ./setup.sh --web    # כלי גרפי בדפדפן (אשף + דשבורד ניהול)
 ```
+
+`setup.sh` מתקין הכל בסדר הנכון: **git pull** (תמיד הקוד העדכני) → חבילות מערכת →
+**דרייבר CP210x** → הרשאות serial → venv+תלויות → תיקיות לוגים → הגדרות (Firebase,
+שם מעלית, מיפוי תגים עם סריקה חיה, התראות) → **שני שירותי systemd** (`rfid-tracker`
++ `shabbat-detector`) → קיצור דרך בשולחן העבודה → **Raspberry Pi Connect** → הפעלה.
+
+לאחר ההתקנה מופיע אייקון **"הגדרת מעלית RFID"** בשולחן העבודה שפותח את הכלי הגרפי.
+
+## Raspberry Pi Connect (גישה מרחוק)
+
+ההתקנה מתקינה ומפעילה את `rpi-connect` (גישת מסך + shell מהדפדפן) ומפעילה linger.
+בסוף ההתקנה (טרמינל) או מהדשבורד/אשף (Web) מתבצעת **התחברות חד-פעמית**: מוצג קישור
+אימות שיש לפתוח ולאשר בחשבון ה-Raspberry Pi שלך (לא ניתן לאוטומציה מלאה — זה מקשר
+את המכשיר לחשבון). אחר כך הגישה זמינה ב-https://connect.raspberrypi.com.
 
 ## עדכון Pi קיים
 
 ```bash
 cd ~/elevator-RFID
-git pull                       # מוריד רק את שינויי הקוד — לא נוגע ב-rfid_config.json
-sudo systemctl restart shabbat-detector
+sudo ./setup.sh                       # מושך מגיט ומפעיל מחדש
+# או מהדשבורד: כפתור "עדכן מגיט והפעל מחדש"
 ```
+`git pull` לעולם לא נוגע ב-`rfid_config.json`.
+
+## התראות
+
+- **כניסה/יציאה ממצב שבת** ו-**אין תנועה ≥ N שעות (לא כולל לילה)**.
+- ערוצים: **Email + Telegram** (WhatsApp — ממשק pluggable להמשך).
+- מוגדר ב-`rfid_config.json → notifications`, ניתן לעריכה ובדיקה מהכלי הגרפי.
+- בדיקה מהירה: `python -m shabbat_detector.notifier --test`.
+
+## ניהול ותחזוקה
+
+- שירותים: `rfid-tracker`, `shabbat-detector`, `fix_cp210x` (דרייבר).
+- לוגים חיים: `journalctl -u shabbat-detector -f` · לוגי קובץ: `logs/`.
+- ניטור טרמינל: `python monitor.py --watch`.
 
 ## קבצים עיקריים
 
+- `setup.sh` — מתקין "הרצה אחת" (bootstrap → `installer/`).
+- `installer/` — לוגיקת התקנה/הגדרה/ניהול משותפת + CLI + כלי גרפי (Flask).
+- `systemd/*.service.in` — תבניות שירות (נתיב/משתמש נקבעים בזמן התקנה).
 - `elevator_tracker_rfid.py` — מעקב קומות לפי RFID.
-- `shabbat_detector/` — חבילת זיהוי שבת (FSM, learner, Firebase client, שירות systemd).
-- `deploy_elevator.sh` — סקריפט פריסה ישן (מ-ZIP/Drive). מוחלף ע"י `git pull`.
-- `rfid_config.example.json` — תבנית קונפיג.
+- `shabbat_detector/` — חבילת זיהוי שבת (FSM, learner, Firebase, התראות, שירות).
+- `tag_mapper.py`, `monitor.py` — כלי מיפוי תגים וניטור.
+- `deploy_elevator.sh`, `shabbat_detector/install.sh` — **deprecated** (מוחלפים ע"י `setup.sh`).

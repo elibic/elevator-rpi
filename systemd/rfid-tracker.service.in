@@ -1,0 +1,21 @@
+[Unit]
+Description=RFID Elevator Tracker — reads tags and reports floor to Firebase
+After=network-online.target fix_cp210x.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{USER}}
+WorkingDirectory={{PROJECT_DIR}}
+# המתנה קצרה כדי לאפשר ל-USB/דרייבר ה-CP210x להופיע לפני פתיחת הפורט.
+ExecStartPre=/bin/sleep 10
+ExecStart={{PYTHON}} -u {{PROJECT_DIR}}/elevator_tracker_rfid.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rfid-tracker
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

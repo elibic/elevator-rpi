@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}אשף התקנה — מעלית RFID{% endblock %}
+{% block page %}wizard{% endblock %}
+{% block content %}
+<h1>אשף התקנה</h1>
+
+<div class="card" id="envCard">
+  <h3 class="section-title">סביבה</h3>
+  <div id="envInfo" class="muted">טוען…</div>
+</div>
+
+{% include "_config_form.html" %}
+
+<div class="card">
+  <h3 class="section-title">התקנה</h3>
+  <p class="muted">ירוץ בסדר: חבילות → דרייבר CP210x → הרשאות → venv → תיקיות → הגדרות → שירותים → קיצור → הפעלה.</p>
+  <div class="btn-row">
+    <button onclick="startInstall(this)">🚀 התקן הכל</button>
+    <button class="secondary" onclick="saveOnly(this)">שמור הגדרות בלבד</button>
+    <button class="secondary" onclick="rpiSignin(this)">🔗 התחבר ל-RPi Connect</button>
+  </div>
+  <div class="log" id="log" style="margin-top:14px;"></div>
+  <div id="rpiLinkBox" class="muted" style="margin-top:8px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='configform.js') }}"></script>
+<script>
+async function loadEnv() {
+  const e = await api('/api/env');
+  document.getElementById('envInfo').innerHTML =
+    `משתמש: <b>${e.user}</b> · תיקייה: <code>${e.project_dir}</code> · ` +
+    `Pi: ${e.is_pi ? 'כן' : 'לא'} · root: ${e.is_root ? 'כן' : 'לא'} · ` +
+    `/dev/ttyUSB0: ${e.serial_present ? '✓' : '✗'}` +
+    (e.dry_run ? ' · <span class="pill warn">DRY-RUN</span>' : '');
+}
+function logLine(item) {
+  const log = document.getElementById('log');
+  const span = document.createElement('div');
+  span.className = item.level || 'info';
+  span.textContent = item.msg;
+  log.appendChild(span); log.scrollTop = log.scrollHeight;
+}
+async function startInstall(btn) {
+  btn.disabled = true;
+  document.getElementById('log').innerHTML = '';
+  await api('/api/install/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(readForm()),
+  });
+  const es = new EventSource('/api/install/stream');
+  es.onmessage = ev => logLine(JSON.parse(ev.data));
+  es.addEventListener('end', () => { es.close(); btn.disabled = false; toast('הסתיים'); });
+  es.onerror = () => { es.close(); btn.disabled = false; };
+}
+async function saveOnly(btn) {
+  btn.disabled = true;
+  const r = await api('/api/config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(readForm()),
+  });
+  toast(r.ok ? 'נשמר ✓' : 'שגיאה: ' + r.detail);
+  btn.disabled = false;
+}
+async function rpiSignin(btn) {
+  btn.disabled = true;
+  const box = document.getElementById('rpiLinkBox');
+  box.textContent = 'מתחיל התחברות ל-RPi Connect… (עד 25 שניות)';
+  const r = await api('/api/rpi-connect/signin', { method: 'POST' });
+  if (r.url) {
+    box.innerHTML = 'פתח ואשר בחשבון ה-Raspberry Pi:<br>' + `<a href="${r.url}" target="_blank">${r.url}</a>`;
+    window.open(r.url, '_blank');
+  } else {
+    box.textContent = 'לא התקבל קישור (אולי כבר מחובר, או rpi-connect לא מותקן).';
+  }
+  btn.disabled = false;
+}
+loadEnv(); loadConfigForm();
+</script>
+{% endblock %}

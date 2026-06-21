@@ -1,0 +1,19 @@
+[Unit]
+Description=Shabbat Elevator Detector — behavioral Shabbat-mode detection
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{USER}}
+WorkingDirectory={{PROJECT_DIR}}
+ExecStart={{PYTHON}} -m shabbat_detector.detector --config {{PROJECT_DIR}}/rfid_config.json
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shabbat-detector
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

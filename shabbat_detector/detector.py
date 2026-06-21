@@ -37,6 +37,7 @@ from .cycle_analyzer import Cycle, CycleAnalyzer, FloorEvent
 from .firebase_client import FirebaseClient
 from .fsm import DetectorState, ElevatorFSM, FSMResult, Violation, _TIME_SCALE
 from .hebcal_gate import HebcalGate
+from .notifier import MovementWatchdog, Notifier
 from .state_persistence import StatePersistence
 
 logging.basicConfig(
@@ -108,6 +109,8 @@ def _apply_result(
     prev_state: DetectorState,
     test_mode: bool,
     override: str = "auto",
+    notifier: Optional[Notifier] = None,
+    shared: Optional[dict] = None,
 ) -> None:
     if result is None:
         return
@@ -139,6 +142,16 @@ def _apply_result(
 
     if effective_shabbat_active is not None:
         updates["SHABBAT_ACTIVE"] = effective_shabbat_active
+
+    # ── התראת כניסה/יציאה ממצב שבת (edge-triggered, התראה אחת לכל מעבר) ──
+    if (
+        notifier is not None and shared is not None
+        and effective_shabbat_active is not None
+        and effective_shabbat_active != shared.get("last_notified_shabbat")
+    ):
+        if not test_mode:
+            notifier.notify_shabbat_change(effective_shabbat_active, result.reason_he)
+        shared["last_notified_shabbat"] = effective_shabbat_active
 
     if test_mode:
         log.info("[TEST] Would write: %s", json.dumps(updates, ensure_ascii=False))
@@ -282,6 +295,17 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
     # Seed FSM with current global settings (SHABBAT_DETECTION tunables etc.)
     fsm.update_settings(settings)
 
+    # ── Notifications ─────────────────────────────────────────────────────────
+    notifier = Notifier(rfid_cfg.get("notifications"), elevator_id)
+    nm_cfg = (rfid_cfg.get("notifications") or {}).get("no_movement", {})
+    movement_watchdog = MovementWatchdog(
+        threshold_hours=float(nm_cfg.get("threshold_hours", 10)),
+        night_start=nm_cfg.get("night_start", "23:00"),
+        night_end=nm_cfg.get("night_end", "06:00"),
+    )
+    if saved and "notify" in saved:
+        movement_watchdog.load_dict(saved["notify"].get("movement"))
+
     # ── Hebcal gate ───────────────────────────────────────────────────────────
     hebcal = HebcalGate()
 
@@ -352,7 +376,22 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
     _shared = {
         "prev_event": None,                      # type: Optional[FloorEvent]
         "last_event_received_ts": time.time(),   # any Firebase event (incl. dups)
+        # מצב השבת שעליו כבר נשלחה התראה — מאותחל למצב המשוחזר כדי לא להתריע
+        # התראת-שווא בעלייה (restart). ברירת מחדל לפי ה-FSM המשוחזר.
+        "last_notified_shabbat": (saved or {}).get("notify", {}).get(
+            "last_notified_shabbat", fsm.state == DetectorState.SHABBAT
+        ),
     }
+
+    def _full_state() -> dict:
+        return {
+            "fsm": fsm.to_dict(),
+            "learner": learner.to_dict(),
+            "notify": {
+                "last_notified_shabbat": _shared.get("last_notified_shabbat"),
+                "movement": movement_watchdog.to_dict(),
+            },
+        }
 
     # ── Graceful shutdown ─────────────────────────────────────────────────────
     _running = [True]
@@ -361,7 +400,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
         log.info("Shutting down (signal %s)", sig)
         _running[0] = False
         with _fsm_lock:
-            persistence.save({"fsm": fsm.to_dict(), "learner": learner.to_dict()}, force=True)
+            persistence.save(_full_state(), force=True)
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, _shutdown)
@@ -408,7 +447,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                 )
                 log.info("Watchdog: inactivity violation at floor %s", prev.floor)
                 vresult = fsm.process_violation(v, el_config, now, hebcal_ok)
-                _apply_result(vresult, fsm, fb, prev_state, test_mode, override)
+                _apply_result(vresult, fsm, fb, prev_state, test_mode, override, notifier, _shared)
                 # Reset the floor's "first seen" timestamp so we don't refire immediately
                 _shared["prev_event"] = FloorEvent(floor=prev.floor, timestamp=now)
                 prev_state = fsm.state
@@ -428,7 +467,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                 )
                 log.info("Watchdog: no-report violation")
                 vresult = fsm.process_violation(v, el_config, now, hebcal_ok)
-                _apply_result(vresult, fsm, fb, prev_state, test_mode, override)
+                _apply_result(vresult, fsm, fb, prev_state, test_mode, override, notifier, _shared)
                 _shared["last_event_received_ts"] = now
 
     def _watchdog_loop() -> None:
@@ -441,6 +480,16 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                 _watchdog_tick()
             except Exception as e:
                 log.warning("Watchdog tick failed: %s", e)
+            # ── התראת "אין תנועה N שעות (לא כולל לילה)" — רצה תמיד, בכל מצב FSM ──
+            try:
+                with _fsm_lock:
+                    fired = movement_watchdog.check()
+                    last_mv = movement_watchdog.last_movement_ts
+                if fired:
+                    log.info("Movement watchdog: no-movement threshold crossed")
+                    notifier.notify_no_movement(movement_watchdog.threshold_s / 3600, last_mv)
+            except Exception as e:
+                log.warning("Movement watchdog failed: %s", e)
 
     watchdog_thread = threading.Thread(target=_watchdog_loop, daemon=True, name="inactivity-watchdog")
     watchdog_thread.start()
@@ -512,7 +561,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                     prev_fsm_state = fsm.state
                     vresult = fsm.process_violation(v, el_config, now, hebcal_ok)
                     override = (el_config.get("SHABBAT_OVERRIDE") or "auto")
-                    _apply_result(vresult, fsm, fb, prev_fsm_state, test_mode, override)
+                    _apply_result(vresult, fsm, fb, prev_fsm_state, test_mode, override, notifier, _shared)
 
             # ── Feed to cycle analyzer ────────────────────────────────────────────
             ar = analyzer.push_event(event)
@@ -522,14 +571,14 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
 
             if ar.cycle_just_started:
                 cresult = fsm.on_cycle_started(now)
-                _apply_result(cresult, fsm, fb, prev_fsm_state, test_mode, override)
+                _apply_result(cresult, fsm, fb, prev_fsm_state, test_mode, override, notifier, _shared)
                 prev_fsm_state = fsm.state
 
             if ar.completed_cycle:
                 cresult = fsm.on_cycle_completed(
                     ar.completed_cycle, el_config, settings, now, hebcal_ok
                 )
-                _apply_result(cresult, fsm, fb, prev_fsm_state, test_mode, override)
+                _apply_result(cresult, fsm, fb, prev_fsm_state, test_mode, override, notifier, _shared)
 
                 # Auto-learn: feed matched cycles to the learner
                 if cresult and cresult.last_cycle_summary:
@@ -550,9 +599,11 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                     log.info("AutoLearner: reset (exited SHABBAT)")
 
             _shared["prev_event"] = event
+            # אירוע קומה חדש = תנועת-מעלית אמיתית → מאפס את watchdog ה"אין תנועה".
+            movement_watchdog.record_movement(now)
 
             # Persist state (rate-limited internally)
-            persistence.save({"fsm": fsm.to_dict(), "learner": learner.to_dict()})
+            persistence.save(_full_state())
 
     log.info("Event loop ended")
 
