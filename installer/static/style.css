@@ -28,11 +28,11 @@ header nav a {
   border-radius: 8px; transition: .2s;
 }
 header nav a:hover, header nav a.active { background: var(--panel2); color: #fff; }
-main { max-width: 920px; margin: 24px auto; padding: 0 20px; }
+main { max-width: 1040px; margin: 16px auto; padding: 0 20px; }
 h1, h2, h3 { color: #fff; }
 .card {
   background: var(--panel); border: 1px solid var(--border);
-  border-radius: 14px; padding: 20px; margin-bottom: 20px;
+  border-radius: 14px; padding: 16px; margin-bottom: 14px;
 }
 label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: .9rem; }
 input[type=text], input[type=password], input[type=number], select {
@@ -83,3 +83,19 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   box-shadow: 0 4px 20px #0008; opacity: 0; transition: .3s; z-index: 100;
 }
 .toast.show { opacity: 1; }
+
+/* ── דשבורד — פריסה צפופה + הסברי FSM ─────────────────────────── */
+.dash-h1 { margin: 6px 0 14px; font-size: 1.4rem; }
+.dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-bottom: 14px; }
+.dash-grid > .card { margin-bottom: 0; }
+.svc-card { margin: 0 !important; padding: 12px !important; }
+.floor-big { font-size: 1.15rem; }
+.ltr { direction: ltr; text-align: left; unicode-bidi: plaintext; }
+.fsm-desc { font-size: .8rem; color: var(--muted); padding: 2px 0 8px; line-height: 1.5; }
+.legend { margin-top: 10px; }
+.legend summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
+.legend .kv { padding: 6px 0 0; border: none; }
+.note-inline { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: #0f1d33;
+  border-right: 3px solid var(--warn); font-size: .8rem; line-height: 1.6; color: var(--muted); }
+.note-inline code { direction: ltr; display: inline-block; }
+button.sm { padding: 5px 10px; font-size: .82rem; }

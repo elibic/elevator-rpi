@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -38,6 +39,11 @@ def _installer(progress=None) -> core.Installer:
 # ── דפים ──────────────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
+    return render_template("dashboard.html")
+
+
+@app.route("/wizard")
+def wizard_page():
     return render_template("wizard.html")
 
 
@@ -217,6 +223,30 @@ def api_logs():
     return jsonify(out)
 
 
+def _open_browser(url: str) -> None:
+    """פותח את הדפדפן כמשתמש שולחן-העבודה האמיתי (לא root) — אחרת, תחת sudo,
+    הדפדפן לא נפתח (אין גישה ל-display של המשתמש). תומך X11 ו-Wayland."""
+    sudo_user = os.environ.get("SUDO_USER")
+    try:
+        if hasattr(os, "geteuid") and os.geteuid() == 0 and sudo_user and sudo_user != "root":
+            import pwd
+            uid = pwd.getpwnam(sudo_user).pw_uid
+            env_pairs = [
+                f"DISPLAY={os.environ.get('DISPLAY', ':0')}",
+                f"WAYLAND_DISPLAY={os.environ.get('WAYLAND_DISPLAY', 'wayland-0')}",
+                f"XDG_RUNTIME_DIR=/run/user/{uid}",
+            ]
+            subprocess.Popen(["sudo", "-u", sudo_user, "env", *env_pairs, "xdg-open", url],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+    except Exception:
+        pass
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
 def run_web(port: int = 8080, dry_run: bool = False,
             open_browser: bool = True, mock_serial: bool = False) -> None:
     _state["dry_run"] = dry_run
@@ -226,6 +256,6 @@ def run_web(port: int = 8080, dry_run: bool = False,
     url = f"http://127.0.0.1:{port}/"
     print(f"הכלי הגרפי זמין בכתובת: {url}", flush=True)
     if open_browser:
-        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+        threading.Timer(1.2, lambda: _open_browser(url)).start()
     # localhost בלבד — כלי אדמין מקומי
     app.run(host="127.0.0.1", port=port, threaded=True, debug=False)

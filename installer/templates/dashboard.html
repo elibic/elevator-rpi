@@ -2,7 +2,23 @@
 {% block title %}דשבורד — מעלית RFID{% endblock %}
 {% block page %}dashboard{% endblock %}
 {% block content %}
-<h1>דשבורד ניהול</h1>
+<h1 class="dash-h1">דשבורד ניהול</h1>
+
+<div class="dash-grid">
+  <div class="card">
+    <h3 class="section-title">מצב חי (Firebase)</h3>
+    <div id="live" class="muted">טוען…</div>
+    <details class="legend">
+      <summary>מה מצבי ה-FSM אומרים?</summary>
+      <div id="fsmLegend"></div>
+    </details>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">מידע התקנה</h3>
+    <div id="installInfo" class="muted">טוען…</div>
+  </div>
+</div>
 
 <div class="card">
   <h3 class="section-title">שירותים</h3>
@@ -12,28 +28,24 @@
   </div>
 </div>
 
-<div class="card">
-  <h3 class="section-title">מצב חי (Firebase)</h3>
-  <div id="live" class="muted">טוען…</div>
-</div>
-
-<div class="card">
-  <h3 class="section-title">Raspberry Pi Connect</h3>
-  <div id="rpiConnect" class="muted">טוען…</div>
-  <div class="btn-row">
-    <button onclick="rpiSignin(this)">🔗 התחבר ל-RPi Connect</button>
-    <a id="rpiLink" href="#" target="_blank" style="display:none;"></a>
+<div class="dash-grid">
+  <div class="card">
+    <h3 class="section-title">Raspberry Pi Connect</h3>
+    <div id="rpiConnect" class="muted">טוען…</div>
+    <div class="btn-row">
+      <button onclick="rpiSignin(this)">🔗 התחבר ל-RPi Connect</button>
+    </div>
+    <div id="rpiLinkBox" class="muted" style="margin-top:8px;"></div>
   </div>
-  <div id="rpiLinkBox" class="muted" style="margin-top:8px;"></div>
-</div>
 
-<div class="card">
-  <h3 class="section-title">לוגים אחרונים</h3>
-  <div class="btn-row">
-    <button class="secondary" onclick="showLog('detector')">detector</button>
-    <button class="secondary" onclick="showLog('tracker')">tracker</button>
+  <div class="card">
+    <h3 class="section-title">לוגים אחרונים</h3>
+    <div class="btn-row">
+      <button class="secondary" onclick="showLog('detector')">detector</button>
+      <button class="secondary" onclick="showLog('tracker')">tracker</button>
+    </div>
+    <div class="log" id="logView" style="margin-top:10px;height:220px;"></div>
   </div>
-  <div class="log" id="logView" style="margin-top:10px;"></div>
 </div>
 {% endblock %}
 
@@ -41,20 +53,35 @@
 <script>
 const SERVICES = { 'fix_cp210x': 'דרייבר', 'rfid-tracker': 'Tracker', 'shabbat-detector': 'Detector' };
 
+// הסבר בעברית לכל מצב FSM של גלאי השבת.
+const FSM_INFO = {
+  NORMAL:            { he: 'רגיל (חול)',        desc: 'אין מחזור שבת — פעילות מעלית רגילה.' },
+  CANDIDATE_SHABBAT: { he: 'בודק מחזור שבת',     desc: 'זוהתה תחילת מחזור-שבת אפשרי. ממתין לכמה מחזורים תואמים רצופים לפני שמאשרים.' },
+  SHABBAT:           { he: 'שבת מאושר',          desc: 'זוהה דפוס שבת יציב — SHABBAT_ACTIVE=true.' },
+  CANDIDATE_EXIT:    { he: 'בודק יציאה משבת',    desc: 'פעילות חריגה בזמן שבת — סופר הפרות לפני חזרה לחול.' },
+};
+
 function pill(active) {
   return active === 'active' ? '<span class="pill ok">פעיל</span>'
        : '<span class="pill bad">' + active + '</span>';
 }
+
+function renderLegend() {
+  document.getElementById('fsmLegend').innerHTML = Object.entries(FSM_INFO).map(
+    ([k, v]) => `<div class="kv"><b class="ltr">${k}</b><span>${v.he}</span></div>
+                 <div class="fsm-desc">${v.desc}</div>`).join('');
+}
+
 async function refresh() {
   const st = await api('/api/status');
   document.getElementById('services').innerHTML = (st.services || []).map(s => `
-    <div class="card" style="margin:0;">
+    <div class="card svc-card">
       <div class="kv"><b>${SERVICES[s.service] || s.service}</b> ${pill(s.active)}</div>
       <div class="kv"><span class="muted">enabled</span><span>${s.enabled}</span></div>
       <div class="btn-row">
-        <button onclick="svc('${s.service}','restart')">restart</button>
-        <button class="secondary" onclick="svc('${s.service}','stop')">stop</button>
-        <button class="secondary" onclick="svc('${s.service}','start')">start</button>
+        <button class="sm" onclick="svc('${s.service}','restart')">restart</button>
+        <button class="sm secondary" onclick="svc('${s.service}','stop')">stop</button>
+        <button class="sm secondary" onclick="svc('${s.service}','start')">start</button>
       </div>
     </div>`).join('');
 
@@ -63,14 +90,44 @@ async function refresh() {
   if (st.live_error) {
     document.getElementById('live').textContent = 'שגיאת חיבור: ' + st.live_error;
   } else {
+    const state = sd.state || 'NORMAL';
+    const info = FSM_INFO[state] || { he: '', desc: '' };
+    const shActive = cfg.SHABBAT_ACTIVE === true;
+    // הסבר כשמחכים לאישור שבת (התשובה ל"למה SHABBAT_ACTIVE לא משתנה")
+    const waitNote = (!shActive && state !== 'NORMAL')
+      ? `<div class="note-inline">ⓘ SHABBAT_ACTIVE יידלק רק לאחר כמה מחזורי-שבת רצופים <b>ובחלון זמני-שבת (hebcal)</b>.
+           לבדיקה מיידית: הגדר <code>SHABBAT_OVERRIDE=true</code> או <code>HEBCAL_GATE_ENABLED=false</code> בהגדרות.</div>`
+      : '';
     document.getElementById('live').innerHTML = `
       <div class="kv"><span>מעלית</span><b>${st.elevator_id || '?'}</b></div>
-      <div class="kv"><span>מצב FSM</span><b>${sd.state || 'NORMAL'}</b></div>
-      <div class="kv"><span>SHABBAT_ACTIVE</span>${cfg.SHABBAT_ACTIVE ? '<span class="pill ok">true</span>' : '<span class="pill warn">false</span>'}</div>
-      <div class="kv"><span>קומה נוכחית</span><b>${elv.floor ?? '?'}</b></div>
-      <div class="kv"><span>סיבת מעבר אחרון</span><span class="muted">${sd.last_transition_reason || '—'}</span></div>`;
+      <div class="kv"><span>קומה נוכחית</span><b class="floor-big">${elv.floor ?? '?'}</b></div>
+      <div class="kv"><span>מצב FSM</span><b class="ltr">${state}</b></div>
+      <div class="fsm-desc">${info.he} — ${info.desc}</div>
+      <div class="kv"><span>SHABBAT_ACTIVE</span>${shActive ? '<span class="pill ok">true</span>' : '<span class="pill warn">false</span>'}</div>
+      <div class="kv"><span>סיבת מעבר אחרון</span><span class="muted">${sd.last_transition_reason || '—'}</span></div>
+      ${waitNote}`;
   }
 }
+
+async function loadInstallInfo() {
+  try {
+    const [env, cfg] = await Promise.all([api('/api/env'), api('/api/config')]);
+    const s = cfg.settings || {}, tags = cfg.tags || {};
+    const fbHost = (s.FIREBASE_URL || '').replace(/^https?:\/\//, '').split('/')[0] || '—';
+    document.getElementById('installInfo').innerHTML = `
+      <div class="kv"><span>מעלית (ELEVATOR_ID)</span><b>${s.ELEVATOR_ID || '—'}</b></div>
+      <div class="kv"><span>Firebase</span><span class="ltr muted">${fbHost}</span></div>
+      <div class="kv"><span>תגים ממופים</span><b>${Object.keys(tags).length}</b></div>
+      <div class="kv"><span>משתמש</span><span>${env.user}</span></div>
+      <div class="kv"><span>תיקייה</span><span class="ltr muted">${env.project_dir}</span></div>
+      <div class="kv"><span>ענף git</span><span class="ltr">${env.git_branch || '—'}</span></div>
+      <div class="kv"><span>Raspberry Pi</span><span>${env.is_pi ? 'כן' : 'לא'}</span></div>
+      <div class="kv"><span>קורא RFID</span>${env.serial_present ? '<span class="pill ok">מחובר</span>' : '<span class="pill warn">לא מזוהה</span>'}</div>`;
+  } catch (e) {
+    document.getElementById('installInfo').textContent = 'שגיאה בטעינת מידע ההתקנה';
+  }
+}
+
 async function svc(name, action) {
   await api('/api/service/' + name + '/' + action, { method: 'POST' });
   toast(name + ' → ' + action); setTimeout(refresh, 800);
@@ -110,6 +167,9 @@ async function rpiSignin(btn) {
   }
   btn.disabled = false; setTimeout(refreshRpi, 3000);
 }
+
+renderLegend();
+loadInstallInfo();
 refresh(); setInterval(refresh, 5000); showLog('detector');
 refreshRpi(); setInterval(refreshRpi, 10000);
 </script>
