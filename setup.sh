@@ -47,7 +47,7 @@ if [[ "${ELEVATOR_SETUP_REEXEC:-0}" != "1" ]]; then
     AFTER="$(git -C "$DIR" rev-parse HEAD 2>/dev/null || echo none)"
     if [[ "$BEFORE" != "$AFTER" ]]; then
       echo "הקוד עודכן — מריץ מחדש את ההתקנה…"
-      exec env ELEVATOR_SETUP_REEXEC=1 bash "$DIR/setup.sh" ${BRANCH:+--branch "$BRANCH"} "${PY_ARGS[@]:-}"
+      exec env ELEVATOR_SETUP_REEXEC=1 bash "$DIR/setup.sh" ${BRANCH:+--branch "$BRANCH"} ${PY_ARGS[@]+"${PY_ARGS[@]}"}
     fi
   fi
 fi
@@ -73,4 +73,4 @@ chown -R "$REAL_USER":"$REAL_USER" "$VENV" 2>/dev/null || true
 
 # ── 3. מעבירים את השרביט ל-installer (אותה לוגיקה ל-CLI ול-Web) ──────────────
 cd "$DIR"
-exec "$VENV/bin/python" -m installer "${PY_ARGS[@]:-}"
+exec "$VENV/bin/python" -m installer ${PY_ARGS[@]+"${PY_ARGS[@]}"}
