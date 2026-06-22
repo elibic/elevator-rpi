@@ -96,7 +96,7 @@ async function refresh() {
     // הסבר כשמחכים לאישור שבת (התשובה ל"למה SHABBAT_ACTIVE לא משתנה")
     const waitNote = (!shActive && state !== 'NORMAL')
       ? `<div class="note-inline">ⓘ SHABBAT_ACTIVE יידלק רק לאחר כמה מחזורי-שבת רצופים <b>ובחלון זמני-שבת (hebcal)</b>.
-           לבדיקה מיידית: הגדר <code>SHABBAT_OVERRIDE=true</code> או <code>HEBCAL_GATE_ENABLED=false</code> בהגדרות.</div>`
+           לבדיקה מיידית: הוסף <code>SHABBAT_OVERRIDE="force_on"</code> ליד SHABBAT_ACTIVE, או <code>HEBCAL_GATE_ENABLED=false</code>.</div>`
       : '';
     document.getElementById('live').innerHTML = `
       <div class="kv"><span>מעלית</span><b>${st.elevator_id || '?'}</b></div>

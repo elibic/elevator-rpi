@@ -33,9 +33,13 @@ def _parse_config(path: str) -> tuple[str, str]:
     with open(path, encoding="utf-8") as f:
         s = json.load(f).get("settings", {})
     url = s.get("FIREBASE_BASE_URL") or s.get("BASE_FIREBASE_URL") or s.get("FIREBASE_URL", "")
+    # מנרמלים לשורש ה-DB (scheme://host) — עקבי עם הגלאי, ובלי תלות אם הוזן
+    # '/elevators', '/elevators.json' או שורש.
+    from urllib.parse import urlsplit
     url = url.rstrip("/")
-    if url.endswith(".json"):
-        url = url[: url.rfind("/")]
+    _pu = urlsplit(url)
+    if _pu.scheme and _pu.netloc:
+        url = f"{_pu.scheme}://{_pu.netloc}"
     return url, str(s.get("ELEVATOR_ID", ""))
 
 

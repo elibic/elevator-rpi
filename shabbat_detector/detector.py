@@ -245,11 +245,13 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
     # Support both flat {"ELEVATOR_ID":...} and nested {"settings":{"ELEVATOR_ID":...}}
     _s = rfid_cfg.get("settings", rfid_cfg)
     raw_url: str = _s.get("FIREBASE_BASE_URL") or _s.get("BASE_FIREBASE_URL") or _s.get("FIREBASE_URL", "")
-    # Strip trailing path like /elevators.json → keep only the base host
+    # הגלאי בונה בעצמו /elevators, /elevator_configs, /settings — לכן הוא צריך את
+    # *שורש* ה-DB. ניקח scheme://host בלבד, כך שזה עובד עם '/elevators',
+    # '/elevators.json', או שורש — בלי תלות בפורמט שהוזן (תיקון footgun).
+    from urllib.parse import urlsplit
     raw_url = raw_url.rstrip("/")
-    if raw_url.endswith(".json"):
-        raw_url = raw_url[: raw_url.rfind("/")]
-    firebase_url: str = raw_url
+    _pu = urlsplit(raw_url)
+    firebase_url: str = f"{_pu.scheme}://{_pu.netloc}" if (_pu.scheme and _pu.netloc) else raw_url
     elevator_id: str = str(_s.get("ELEVATOR_ID", rfid_cfg.get("ELEVATOR_ID", "")))
     secret_key: str = _s.get("SECRET_KEY", rfid_cfg.get("SECRET_KEY", ""))
 
