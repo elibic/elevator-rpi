@@ -3,7 +3,7 @@ installer/web.py — הכלי הגרפי בדפדפן (Flask, localhost בלבד
 
 שלושה חלקים:
   • אשף התקנה (/)            — מריץ את צעדי core.Installer עם progress חי (SSE).
-  • הגדרה (/config)         — Firebase, מיפוי תגים (סריקה חיה), התראות.
+  • הגדרה (/config)         — Firebase, מיפוי תגים (סריקה חיה). [התראות עברו לענן.]
   • דשבורד (/dashboard)     — סטטוס חי, ניהול שירותים, עדכון מגיט, לוגים.
 
 רץ תחת sudo (נדרש ל-systemctl/התקנה) ומאזין רק על 127.0.0.1 — כלי אדמין מקומי.
@@ -81,19 +81,18 @@ def api_env():
 def api_get_config():
     cfg = _installer().load_config()
     cfg.pop("_comment", None)
+    # הערה: notifications לא נחשף יותר (סודות) — ההתראות נוהלו עברו לענן.
     return jsonify({
         "settings": cfg.get("settings", {}),
         "tags": cfg.get("tags", {}),
-        "notifications": cfg.get("notifications", {}),
     })
 
 
 @app.route("/api/config", methods=["POST"])
 def api_save_config():
     body = request.get_json(force=True) or {}
-    res = _installer().write_config(
-        body.get("settings", {}), body.get("tags", {}), body.get("notifications"),
-    )
+    # לא מעבירים notifications ⇒ write_config משאיר בלוק קיים ב-config ללא שינוי.
+    res = _installer().write_config(body.get("settings", {}), body.get("tags", {}))
     return jsonify({"ok": res.ok, "detail": res.detail})
 
 
@@ -120,7 +119,7 @@ def api_install_start():
         inst = _installer(progress=progress)
         try:
             results = inst.install_all(
-                body.get("settings", {}), body.get("tags", {}), body.get("notifications"),
+                body.get("settings", {}), body.get("tags", {}),
             )
             ok = all(r.ok for r in results)
             for r in results:
@@ -191,18 +190,6 @@ def api_service(name, action):
 def api_update_git():
     res = _installer().update_from_git()
     return jsonify({"ok": res.ok, "detail": res.detail})
-
-
-@app.route("/api/notify-test", methods=["POST"])
-def api_notify_test():
-    from shabbat_detector.notifier import Notifier
-    body = request.get_json(force=True) or {}
-    notifications = body.get("notifications", {})
-    cfg = _installer().load_config().get("settings", {})
-    eid = str(cfg.get("ELEVATOR_ID", "?"))
-    notifier = Notifier(notifications, eid)
-    notifier.enabled = True  # לבדיקה — מתעלמים מ-enabled
-    return jsonify({"results": notifier.send_test()})
 
 
 @app.route("/api/rpi-connect/status")
