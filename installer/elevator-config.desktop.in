@@ -1,8 +1,8 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=הגדרת מעלית RFID
-Name[en]=Elevator RFID Config
+Name=דשבורד מעלית
+Name[en]=Elevator Dashboard
 Comment=דשבורד ניהול למעלית — נפתח בדפדפן
 Comment[en]=Elevator management dashboard — opens in browser
 Exec=xdg-open http://127.0.0.1:8080/

@@ -36,6 +36,15 @@ def _installer(progress=None) -> core.Installer:
     return core.Installer(_state["env"], dry_run=_state["dry_run"], progress=progress)
 
 
+@app.after_request
+def _no_cache(resp):
+    """כלי אדמין מקומי — תמיד טרי, בלי קאש דפדפן (מונע "תקוע על גרסה ישנה")."""
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
 # ── דפים ──────────────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
