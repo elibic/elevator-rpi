@@ -28,16 +28,17 @@
   של המשתמש (Permission denied). תוקן ב-`setup.sh` החדש, אך Pi על קוד ישן צריך את ה-`chown` קודם.
 - דשבורד מקומי על Pi קיים (לא נוגע בקונפיג): אחרי ה-pull → `sudo ./venv/bin/python -m installer --install-shortcut`.
 
-## 🔔 התראות (משימה 1)
-- **קוד:** `shabbat_detector/notifier.py` (class `Notifier`, `send_test()`, `notify_shabbat_change()`).
-  אירועים: `shabbat_enter`, `shabbat_exit`, `no_movement`.
-- **קונפיג:** `rfid_config.json → notifications` (ערוצים: `telegram{bot_token,chat_id}`,
-  `email{smtp...}`, whatsapp-stub). הסודות חיים רק שם.
-- **טריגר:** `detector.py → _apply_result()` → `notifier.notify_shabbat_change()` (edge-triggered).
-- **בדיקה:** `~/elevator-RFID/venv/bin/python -m shabbat_detector.notifier --test`
-  (או כפתור הבדיקה בכלי הגרפי → `/api/notify-test`).
-- **עריכה ב-UI:** טאב התראות ב-`installer/templates/config.html` + `ramada-web/public/setup.html`.
-- *להתחלה: לקרוא את `notifier.py` במלואו + סכימת ה-notifications ב-`rfid_config.example.json`.*
+## 🔔 התראות (משימה 1) — ✅ עברו לענן
+- **שינוי ארכיטקטוני (חשוב):** ההתראות עברו מ-ה-Pi ל-**Cloud Functions ב-`ramada-web/functions/`**,
+  כי Pi כבוי / הפסקת-חשמל לא יכול להתריע על עצמו. שלוש ההתראות (כניסה/יציאה משבת, אין-תנועה
+  עם החרגת לילה) רצות עכשיו בענן מעל Firebase; "אין תנועה" **מכסה גם הפסקת-חשמל** (Pi מת ⇒
+  `elevators/{id}/timestamp` קופא). פירוט מלא ופריסה: `ramada-web/functions/README.md`.
+- **צד ה-Pi (`shabbat_detector/notifier.py`):** הקוד נשאר (בדוק, 10/10 טסטים) אך מושבת בפרודקשן
+  כדי למנוע התראות כפולות — שמור `rfid_config.json → notifications.enabled: false`.
+- **סודות בענן:** Functions Secrets בלבד (`TELEGRAM_BOT_TOKEN`/`SMTP_PASS`/`NOTIFY_TEST_KEY`).
+  **העדפות:** `/settings/notifications` ב-RTDB. **בדיקה:** `notifyTest?key=...` (ראה README).
+- **פתוח להמשך:** טאב עריכת התראות ב-`ramada-web/public/setup.html` שייכתוב ל-`/settings/notifications`
+  (סודות נשארים ב-Secrets — לא נכנסים ל-DB).
 
 ## מודל נתונים ב-Firebase (מ-setup.html — מחייב)
 - **`elevator_configs/{id}`**: כל הקונפיג + **`SHABBAT_OVERRIDE`** (`auto`/`force_on`/`force_off`
