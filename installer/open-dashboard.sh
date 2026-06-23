@@ -4,7 +4,9 @@
 URL="http://127.0.0.1:8080/"
 BIN="$(command -v chromium-browser || command -v chromium || true)"
 if [ -n "$BIN" ]; then
-  exec "$BIN" --kiosk --noerrdialogs --disable-infobars --no-first-run "$URL"
+  # --app = חלון אפליקציה נקי (בלי שורת כתובת/טאבים) שאפשר לסגור (כפתור ✕ בדף),
+  # בניגוד ל--kiosk שחוסם סגירה ומכריח Alt+F4 (ששובר סשן מרוחק).
+  exec "$BIN" --app="$URL" --start-fullscreen --noerrdialogs --disable-infobars --no-first-run
 fi
 # נפילה אחורה — דפדפן ברירת המחדל (לא מסך מלא).
 exec xdg-open "$URL"

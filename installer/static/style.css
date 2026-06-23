@@ -28,6 +28,9 @@ header nav a {
   border-radius: 8px; transition: .2s;
 }
 header nav a:hover, header nav a.active { background: var(--panel2); color: #fff; }
+.close-btn { margin-inline-start: auto; background: var(--danger); color: #fff;
+  font-size: .9rem; padding: 7px 14px; }
+.close-btn:hover { filter: brightness(1.12); background: var(--danger); }
 main { max-width: 1040px; margin: 16px auto; padding: 0 20px; }
 h1, h2, h3 { color: #fff; }
 .card {
