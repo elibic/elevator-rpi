@@ -9,7 +9,7 @@
     <h3 class="section-title">מצב חי (Firebase)</h3>
     <div id="live" class="muted">טוען…</div>
     <details class="legend">
-      <summary>מה מצבי ה-FSM אומרים?</summary>
+      <summary>מה כל מצב-זיהוי אומר?</summary>
       <div id="fsmLegend"></div>
     </details>
   </div>
@@ -53,12 +53,12 @@
 <script>
 const SERVICES = { 'fix_cp210x': 'דרייבר', 'rfid-tracker': 'Tracker', 'shabbat-detector': 'Detector' };
 
-// הסבר בעברית לכל מצב FSM של גלאי השבת.
+// הסבר בעברית לכל מצב-זיהוי של גלאי השבת.
 const FSM_INFO = {
-  NORMAL:            { he: 'רגיל (חול)',        desc: 'אין מחזור שבת — פעילות מעלית רגילה.' },
-  CANDIDATE_SHABBAT: { he: 'בודק מחזור שבת',     desc: 'זוהתה תחילת מחזור-שבת אפשרי. ממתין לכמה מחזורים תואמים רצופים לפני שמאשרים.' },
-  SHABBAT:           { he: 'שבת מאושר',          desc: 'זוהה דפוס שבת יציב — SHABBAT_ACTIVE=true.' },
-  CANDIDATE_EXIT:    { he: 'בודק יציאה משבת',    desc: 'פעילות חריגה בזמן שבת — סופר הפרות לפני חזרה לחול.' },
+  NORMAL:            { he: 'רגיל',        desc: 'אין מחזור שבת — פעילות מעלית רגילה.' },
+  CANDIDATE_SHABBAT: { he: 'בודק שבת',    desc: 'זוהתה תחילת מחזור-שבת אפשרי. ממתין לכמה מחזורים תואמים רצופים לפני שמאשרים.' },
+  SHABBAT:           { he: 'שבת',         desc: 'זוהה דפוס שבת יציב — SHABBAT_ACTIVE=true.' },
+  CANDIDATE_EXIT:    { he: 'בודק יציאה',  desc: 'פעילות חריגה בזמן שבת — סופר הפרות לפני חזרה לחול.' },
 };
 
 // מקור הדריסה הידנית (override) — auto/force_on/force_off (string או {value}), מ-elevator_configs/{id}.
@@ -99,7 +99,7 @@ async function refresh() {
     document.getElementById('live').textContent = 'שגיאת חיבור: ' + st.live_error;
   } else {
     const state = sd.state || 'NORMAL';
-    const info = FSM_INFO[state] || { he: '', desc: '' };
+    const info = FSM_INFO[state] || { he: state, desc: '' };
     const shActive = cfg.SHABBAT_ACTIVE === true;
     // הסבר כשמחכים לאישור שבת (התשובה ל"למה SHABBAT_ACTIVE לא משתנה")
     const waitNote = (!shActive && state !== 'NORMAL')
@@ -109,8 +109,8 @@ async function refresh() {
     document.getElementById('live').innerHTML = `
       <div class="kv"><span>מעלית</span><b>${st.elevator_id || '?'}</b></div>
       <div class="kv"><span>קומה נוכחית</span><b class="floor-big">${elv.floor ?? '?'}</b></div>
-      <div class="kv"><span>מצב FSM</span><b class="ltr">${state}</b></div>
-      <div class="fsm-desc">${info.he} — ${info.desc}</div>
+      <div class="kv"><span>מצב זיהוי שבת</span><b>${info.he}</b></div>
+      <div class="fsm-desc">${info.desc}</div>
       <div class="kv"><span>מקור (override)</span><b>${overrideLabel(cfg.SHABBAT_OVERRIDE)}</b></div>
       <div class="kv"><span>SHABBAT_ACTIVE</span>${shActive ? '<span class="pill ok">true</span>' : '<span class="pill warn">false</span>'}</div>
       <div class="kv"><span>סיבת מעבר אחרון</span><span class="muted">${sd.last_transition_reason || '—'}</span></div>
