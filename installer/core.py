@@ -31,6 +31,7 @@ from typing import Callable, Optional
 SERVICE_TRACKER = "rfid-tracker"
 SERVICE_DETECTOR = "shabbat-detector"
 SERVICE_CP210X = "fix_cp210x"
+SERVICE_WEB = "elevator-config-web"
 
 STATE_DIR = "/var/lib/shabbat_detector"
 APT_PACKAGES = ["python3-venv", "python3-pip", "git"]
@@ -353,6 +354,48 @@ class Installer:
             self._run(["systemctl", "enable", f"{svc}.service"], check=False)
         return StepResult("services", True)
 
+    def install_web_service(self) -> StepResult:
+        """שירות systemd שמריץ את הכלי הגרפי תמיד על 127.0.0.1:8080 (root, localhost).
+        כך הקיצור בשולחן העבודה רק *פותח דפדפן* — בלי sudo ובלי טרמינל."""
+        self.emit("מתקין שירות לכלי הגרפי (web, localhost:8080)…", "step")
+        if not self._require_root():
+            return StepResult("web_service", False, "no root")
+        content = self._render_template("elevator-config-web.service.in", self._tmpl_mapping())
+        self._write_file(f"/etc/systemd/system/{SERVICE_WEB}.service", content, mode=0o644)
+        self._run(["systemctl", "daemon-reload"])
+        self._run(["systemctl", "enable", f"{SERVICE_WEB}.service"], check=False)
+        # start (ולא restart) — לא להרוג מופע web שאולי מריץ את ההתקנה הזו עצמה.
+        self._run(["systemctl", "start", f"{SERVICE_WEB}.service"], check=False)
+        return StepResult("web_service", True)
+
+    def _set_pcmanfm_quick_exec(self) -> None:
+        """מבטל את חלונית "Execute File" של מנהל-הקבצים (PCManFM) — כך שלחיצה על
+        הקיצור פותחת ישירות. כותב quick_exec=1 לפרופילי pcmanfm של המשתמש."""
+        import glob
+        import configparser
+        base = os.path.join(self.env.home, ".config", "pcmanfm")
+        confs = glob.glob(os.path.join(base, "*", "pcmanfm.conf")) \
+            or [os.path.join(base, "LXDE-pi", "pcmanfm.conf")]   # ברירת המחדל ב-RPi OS
+        for conf in confs:
+            try:
+                if self.dry_run:
+                    self.emit(f"DRY-RUN set quick_exec=1 in {conf}", "dry")
+                    continue
+                os.makedirs(os.path.dirname(conf), exist_ok=True)
+                cp = configparser.ConfigParser()
+                cp.optionxform = str   # שמירת רישיות מפתחות
+                if os.path.exists(conf):
+                    cp.read(conf, encoding="utf-8")
+                if not cp.has_section("config"):
+                    cp.add_section("config")
+                cp.set("config", "quick_exec", "1")
+                with open(conf, "w", encoding="utf-8") as f:
+                    cp.write(f, space_around_delimiters=False)
+                self._chown(conf, self.env.user)
+                self._chown(os.path.dirname(conf), self.env.user)
+            except Exception as e:
+                self.emit(f"אזהרה: הגדרת quick_exec ב-{conf} נכשלה: {e}", "warn")
+
     # ── 8. קיצור דרך לשולחן העבודה ────────────────────────────────────────────
     def install_desktop_shortcut(self) -> StepResult:
         self.emit("יוצר קיצור דרך בשולחן העבודה…", "step")
@@ -380,6 +423,7 @@ class Installer:
         if not self.dry_run and os.path.exists(desktop_file) and shutil.which("gio"):
             self._run(["sudo", "-u", self.env.user, "gio", "set", desktop_file,
                        "metadata::trusted", "true"], check=False)
+        self._set_pcmanfm_quick_exec()   # בלי חלונית "Execute File" בלחיצה
         return StepResult("desktop_shortcut", True, f"{len(wrote)} files")
 
     # ── 9. ניהול שירותים ──────────────────────────────────────────────────────
@@ -548,6 +592,7 @@ class Installer:
             self.setup_directories(),
             self.write_config(settings, tags, notifications),
             self.install_services(),
+            self.install_web_service(),
             self.install_desktop_shortcut(),
         ]
         if rpi_connect:

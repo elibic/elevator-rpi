@@ -23,7 +23,19 @@ def main() -> None:
                         help="אל תפתח דפדפן אוטומטית (web)")
     parser.add_argument("--mock-serial", action="store_true",
                         help="החזר תג מדומה במקום סריקת חומרה (בדיקות)")
+    parser.add_argument("--install-shortcut", action="store_true",
+                        help="התקן רק את שירות הכלי-הגרפי + קיצור שולחן-העבודה (בלי אשף)")
     args = parser.parse_args()
+
+    if args.install_shortcut:
+        from . import core
+        env = core.detect_environment()
+        inst = core.Installer(env, dry_run=args.dry_run,
+                              progress=lambda m, level="info": print(m))
+        inst.install_web_service()
+        inst.install_desktop_shortcut()
+        print("✓ שירות הכלי-הגרפי + הקיצור הותקנו. לחץ על האייקון בשולחן העבודה.")
+        return
 
     if args.web:
         from . import web
