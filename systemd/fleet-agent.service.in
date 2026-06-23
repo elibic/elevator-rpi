@@ -1,0 +1,21 @@
+[Unit]
+Description=Elevator Fleet Agent — version heartbeat + secret-gated remote update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# חייב root: פקודת-עדכון מרוחקת מריצה `./setup.sh` (require_root) ו-systemctl restart
+# לשירותים. השער היחיד לפני הרצת קוד הוא secret_key + חוקי-RTDB על /fleet.
+User=root
+WorkingDirectory={{PROJECT_DIR}}
+ExecStart={{PYTHON}} -m shabbat_detector.fleet_agent --config {{PROJECT_DIR}}/rfid_config.json
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fleet-agent
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

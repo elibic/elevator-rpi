@@ -32,6 +32,7 @@ SERVICE_TRACKER = "rfid-tracker"
 SERVICE_DETECTOR = "shabbat-detector"
 SERVICE_CP210X = "fix_cp210x"
 SERVICE_WEB = "elevator-config-web"
+SERVICE_FLEET = "fleet-agent"
 
 STATE_DIR = "/var/lib/shabbat_detector"
 APT_PACKAGES = ["python3-venv", "python3-pip", "git"]
@@ -368,6 +369,25 @@ class Installer:
         self._run(["systemctl", "start", f"{SERVICE_WEB}.service"], check=False)
         return StepResult("web_service", True)
 
+    def install_fleet_agent(self) -> StepResult:
+        """שירות סוכן-הצי: דיווח גרסה ל-/fleet/{id} + ביצוע פקודת-עדכון מרחוק
+        (מאומתת ב-secret_key). רץ כ-root כי הפקודה מריצה את setup.sh.
+
+        כשההתקנה הזו הופעלה *ע"י* הסוכן עצמו (FLEET_AGENT_UPDATE=1) — מפעילים
+        ב-`start` בלבד כדי לא להרוג את התהליך שמריץ אותנו; הסוכן מבצע restart-
+        עצמי בסיום העדכון. בהרצה אינטראקטיבית — `restart`, לרענון קוד הסוכן.
+        ראו docs/fleet-remote-update.md."""
+        self.emit("מתקין שירות סוכן-צי (דיווח גרסה + עדכון מרחוק)…", "step")
+        if not self._require_root():
+            return StepResult("fleet_agent", False, "no root")
+        content = self._render_template("fleet-agent.service.in", self._tmpl_mapping())
+        self._write_file(f"/etc/systemd/system/{SERVICE_FLEET}.service", content, mode=0o644)
+        self._run(["systemctl", "daemon-reload"])
+        self._run(["systemctl", "enable", f"{SERVICE_FLEET}.service"], check=False)
+        action = "start" if os.environ.get("FLEET_AGENT_UPDATE") == "1" else "restart"
+        self._run(["systemctl", action, f"{SERVICE_FLEET}.service"], check=False)
+        return StepResult("fleet_agent", True)
+
     def _set_pcmanfm_quick_exec(self) -> None:
         """מבטל את חלונית "Execute File" של מנהל-הקבצים (PCManFM) — כך שלחיצה על
         הקיצור פותחת ישירות. כותב quick_exec=1 לפרופילי pcmanfm של המשתמש."""
@@ -447,7 +467,7 @@ class Installer:
         return self.start_services()
 
     def service_action(self, service: str, action: str) -> bool:
-        if service not in (SERVICE_TRACKER, SERVICE_DETECTOR, SERVICE_CP210X):
+        if service not in (SERVICE_TRACKER, SERVICE_DETECTOR, SERVICE_CP210X, SERVICE_FLEET):
             raise ValueError(f"שירות לא מוכר: {service}")
         if action not in ("start", "stop", "restart"):
             raise ValueError(f"פעולה לא מוכרת: {action}")
@@ -464,7 +484,8 @@ class Installer:
         return {"service": service, "active": _q(["is-active"]), "enabled": _q(["is-enabled"])}
 
     def all_status(self) -> list[dict]:
-        return [self.service_status(s) for s in (SERVICE_CP210X, SERVICE_TRACKER, SERVICE_DETECTOR)]
+        return [self.service_status(s)
+                for s in (SERVICE_CP210X, SERVICE_TRACKER, SERVICE_DETECTOR, SERVICE_FLEET)]
 
     # ── עדכון מ-git ───────────────────────────────────────────────────────────
     def update_from_git(self, branch: Optional[str] = None) -> StepResult:
@@ -593,6 +614,7 @@ class Installer:
             self.write_config(settings, tags, notifications),
             self.install_services(),
             self.install_web_service(),
+            self.install_fleet_agent(),
             self.install_desktop_shortcut(),
         ]
         if rpi_connect:

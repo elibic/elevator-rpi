@@ -1,0 +1,25 @@
+[Unit]
+Description=Elevator Fleet Agent — version heartbeat + secret-gated remote update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Must run as root: a remote update command runs `./setup.sh` (require_root) and
+# `systemctl restart`. The only gate before code execution is secret_key + the
+# RTDB rules on /fleet. See docs/fleet-remote-update.md.
+# NOTE: this static copy uses the default install path; `setup.sh` renders the
+# real unit from systemd/fleet-agent.service.in with the actual user/paths.
+User=root
+WorkingDirectory=/home/eco/elevator-RFID
+ExecStart=/home/eco/elevator-RFID/venv/bin/python -m shabbat_detector.fleet_agent \
+    --config /home/eco/elevator-RFID/rfid_config.json
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fleet-agent
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

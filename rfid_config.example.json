@@ -14,7 +14,12 @@
     "ELEVATOR_ID": "A",
     "FIREBASE_URL": "https://YOUR-PROJECT-default-rtdb.europe-west1.firebasedatabase.app/elevators.json",
     "SECRET_KEY": "PUT-YOUR-SECRET-KEY-HERE",
-    "TIME_PER_FLOOR": 30
+    "TIME_PER_FLOOR": 30,
+
+    "_fleet_comment": "ניהול-צי/עדכון-מרחוק (fleet_agent.py) — כל המפתחות אופציונליים, ברירות-מחדל בקוד. ראו docs/fleet-remote-update.md.",
+    "FLEET_ENABLED": true,
+    "FLEET_REPORT_INTERVAL": 300,
+    "FLEET_AUTH_TOKEN": ""
   },
   "notifications": {
     "_comment": "התראות (Email + Telegram). הסודות נשארים בקובץ זה בלבד — אל תעלה ל-Git.",
