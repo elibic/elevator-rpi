@@ -61,6 +61,14 @@ const FSM_INFO = {
   CANDIDATE_EXIT:    { he: 'בודק יציאה משבת',    desc: 'פעילות חריגה בזמן שבת — סופר הפרות לפני חזרה לחול.' },
 };
 
+// מקור הדריסה הידנית (override) — auto/force_on/force_off (string או {value}), מ-elevator_configs/{id}.
+function overrideLabel(ov) {
+  const v = (ov && typeof ov === 'object') ? ov.value : ov;
+  if (v === 'force_on') return '🟢 כפוי פעיל';
+  if (v === 'force_off') return '⚪ כפוי כבוי';
+  return '🤖 אוטומטי';
+}
+
 function pill(active) {
   return active === 'active' ? '<span class="pill ok">פעיל</span>'
        : '<span class="pill bad">' + active + '</span>';
@@ -103,6 +111,7 @@ async function refresh() {
       <div class="kv"><span>קומה נוכחית</span><b class="floor-big">${elv.floor ?? '?'}</b></div>
       <div class="kv"><span>מצב FSM</span><b class="ltr">${state}</b></div>
       <div class="fsm-desc">${info.he} — ${info.desc}</div>
+      <div class="kv"><span>מקור (override)</span><b>${overrideLabel(cfg.SHABBAT_OVERRIDE)}</b></div>
       <div class="kv"><span>SHABBAT_ACTIVE</span>${shActive ? '<span class="pill ok">true</span>' : '<span class="pill warn">false</span>'}</div>
       <div class="kv"><span>סיבת מעבר אחרון</span><span class="muted">${sd.last_transition_reason || '—'}</span></div>
       ${waitNote}`;
