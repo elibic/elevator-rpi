@@ -44,6 +44,11 @@ if [[ "${ELEVATOR_SETUP_REEXEC:-0}" != "1" ]]; then
     else
       git -C "$DIR" pull --ff-only || echo "אזהרה: git pull נכשל (ממשיך עם הקוד הקיים)"
     fi
+    # git רץ כאן כ-root (תחת sudo) ויוצר קבצים בבעלות root — מה ששובר git-pull
+    # עתידי של המשתמש בלי sudo. מחזירים בעלות למשתמש האמיתי.
+    if [[ -n "${SUDO_USER:-}" ]]; then
+      chown -R "$SUDO_USER":"$SUDO_USER" "$DIR" 2>/dev/null || true
+    fi
     AFTER="$(git -C "$DIR" rev-parse HEAD 2>/dev/null || echo none)"
     if [[ "$BEFORE" != "$AFTER" ]]; then
       echo "הקוד עודכן — מריץ מחדש את ההתקנה…"
