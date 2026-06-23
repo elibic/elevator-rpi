@@ -11,8 +11,9 @@
 
 ## התקנה / עדכון
 - **Pi חדש:** `git clone` → `sudo ./setup.sh` (אשף טרמינל) או `sudo ./setup.sh --web` (גרפי).
-  מתקין הכל: דרייברים, venv, **שני שירותים** (`rfid-tracker` + `shabbat-detector`),
-  כלי-web מקומי (`elevator-config-web` על `127.0.0.1:8080`), קיצור שולחן-עבודה, Pi Connect.
+  מתקין הכל: דרייברים, venv, **שלושה שירותים** (`rfid-tracker` + `shabbat-detector` +
+  `fleet-agent`), כלי-web מקומי (`elevator-config-web` על `127.0.0.1:8080`), קיצור
+  שולחן-עבודה, Pi Connect.
 - **Pi קיים — עדכון בטוח (לא נוגע בקונפיג):**
   ```bash
   cd ~/elevator-RFID            # או ~/elevator-rpi
@@ -52,7 +53,16 @@
 - ב-Windows הגדר `$env:PYTHONIOENCODING="utf-8"` למניעת שגיאות Unicode.
 - קומת BOTTOM/TOP נספרת כ-52 שניות (visit 26s + stopped 26s = שני events).
 
+## ניהול-צי / עדכון מרחוק
+- `shabbat_detector/fleet_agent.py` — דיווח גרסה/heartbeat ל-`fleet/{id}` + ביצוע פקודת-עדכון
+  מרחוק מהדשבורד (`/fleet/{id}/command`), מאומתת ב-`secret_key` (bearer-token, אימות בצד ה-Pi).
+  הפקודה מריצה `sudo ./setup.sh`; דיווח `update_status`; הגנת-replay (dedupe + מחיקת הפקודה).
+  שירות `fleet-agent` רץ כ-**root**. תיעוד מלא: `docs/fleet-remote-update.md`.
+- `version` שמדווח = תאריך ה-commit (`YYYY.MM.DD`); ה-`LATEST_VERSION` בדשבורד צריך להיות
+  תאריך ה-commit של ה-tip ב-`main` בכל שחרור.
+
 ## קבצים עיקריים
 - `elevator_tracker_rfid.py` — מעקב קומות לפי RFID.
-- `shabbat_detector/` — חבילת זיהוי שבת (FSM, auto_learner, cycle_analyzer, firebase_client, hebcal_gate, שירות systemd).
+- `shabbat_detector/` — חבילת זיהוי שבת (FSM, auto_learner, cycle_analyzer, firebase_client,
+  hebcal_gate, `fleet_agent`, שירותי systemd).
 - `deploy_elevator.sh` — סקריפט פריסה ישן מ-ZIP/Drive. **מוחלף ע"י `git pull`.**
