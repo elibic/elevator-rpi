@@ -61,44 +61,6 @@ def _collect_tags(inst: core.Installer, existing: dict) -> dict:
     return tags
 
 
-def _collect_notifications(existing: dict) -> dict:
-    n = dict(existing or {})
-    print(f"\n{CYAN}{BOLD}── התראות ──{RESET}")
-    if not _ask_yes("להפעיל התראות?", default=bool(n.get("enabled", False))):
-        n["enabled"] = False
-        return n
-    n["enabled"] = True
-    channels = n.setdefault("channels", {})
-
-    tg = channels.setdefault("telegram", {})
-    if _ask_yes("להפעיל Telegram?", default=bool(tg.get("enabled", False))):
-        tg["enabled"] = True
-        tg["bot_token"] = _ask("Telegram bot_token", tg.get("bot_token", ""))
-        tg["chat_id"] = _ask("Telegram chat_id", tg.get("chat_id", ""))
-    else:
-        tg["enabled"] = False
-
-    em = channels.setdefault("email", {})
-    if _ask_yes("להפעיל Email?", default=bool(em.get("enabled", False))):
-        em["enabled"] = True
-        em["smtp_host"] = _ask("SMTP host", em.get("smtp_host", "smtp.gmail.com"))
-        em["smtp_port"] = int(_ask("SMTP port", str(em.get("smtp_port", 587))))
-        em["username"] = _ask("SMTP username", em.get("username", ""))
-        em["password"] = _ask("SMTP password / app-password", em.get("password", ""))
-        em["from"] = _ask("From", em.get("from", em.get("username", "")))
-        to = _ask("נמענים (מופרדים בפסיק)", ",".join(em.get("to", [])))
-        em["to"] = [t.strip() for t in to.split(",") if t.strip()]
-    else:
-        em["enabled"] = False
-
-    nm = n.setdefault("no_movement", {})
-    nm["threshold_hours"] = float(_ask("סף 'אין תנועה' (שעות)", str(nm.get("threshold_hours", 10))))
-    nm["night_start"] = _ask("תחילת לילה (HH:MM)", nm.get("night_start", "23:00"))
-    nm["night_end"] = _ask("סוף לילה (HH:MM)", nm.get("night_end", "06:00"))
-    n.setdefault("events", {"shabbat_enter": True, "shabbat_exit": True, "no_movement": True})
-    return n
-
-
 def run_cli(dry_run: bool = False, mock_serial: bool = False) -> None:
     env = core.detect_environment()
     inst = core.Installer(env, dry_run=dry_run, progress=_progress)
@@ -139,9 +101,8 @@ def run_cli(dry_run: bool = False, mock_serial: bool = False) -> None:
         print(f"{DIM}(mock-serial: מדלג על מיפוי תגים){RESET}")
     else:
         tags = _collect_tags(inst, cfg.get("tags", {}))
-    notifications = _collect_notifications(cfg.get("notifications", {}))
 
-    res = inst.write_config(settings, tags, notifications)
+    res = inst.write_config(settings, tags)
     if not res.ok:
         print(f"{RED}שגיאה בכתיבת ההגדרות: {res.detail}{RESET}")
         return

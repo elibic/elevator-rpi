@@ -20,24 +20,5 @@
     "FLEET_ENABLED": true,
     "FLEET_REPORT_INTERVAL": 300,
     "FLEET_AUTH_TOKEN": ""
-  },
-  "notifications": {
-    "_comment": "התראות (Email + Telegram). הסודות נשארים בקובץ זה בלבד — אל תעלה ל-Git.",
-    "enabled": false,
-    "events": { "shabbat_enter": true, "shabbat_exit": true, "no_movement": true },
-    "no_movement": { "threshold_hours": 10, "night_start": "23:00", "night_end": "06:00" },
-    "channels": {
-      "telegram": { "enabled": false, "bot_token": "", "chat_id": "" },
-      "email": {
-        "enabled": false,
-        "smtp_host": "smtp.gmail.com",
-        "smtp_port": 587,
-        "username": "",
-        "password": "",
-        "from": "",
-        "to": []
-      },
-      "whatsapp": { "enabled": false }
-    }
   }
 }

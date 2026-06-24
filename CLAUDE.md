@@ -44,9 +44,10 @@
   מחזורים תואמים רצופים **ובחלון hebcal** — או `SHABBAT_OVERRIDE=force_on`.
 
 ## התראות
-- `shabbat_detector/notifier.py` (Email + Telegram). אירועים: shabbat_enter/exit, no_movement.
-- מוגדר ב-`rfid_config.json → notifications` (סודות — לא ב-Git). בדיקה:
-  `python -m shabbat_detector.notifier --test`. טריגר: `detector.py → _apply_result()` (edge-triggered).
+- **הוסרו מה-Pi.** ההתראות מנוהלות מרכזית מדשבורד האדמין (סקשן **"🔔 התראות"** לכל
+  פרויקט) ונשלחות ע"י Google Apps Script (`ramada-web/apps-script`) על בסיס המצב
+  שה-Pi כותב ל-Firebase. אין יותר `notifier.py`, watchdog "אין-תנועה", או סקשן
+  `notifications` ב-`rfid_config.json`.
 
 ## סימולטור (הרצה מקומית לבדיקות)
 - `shabbat_elevator_A_simulator.py`, `firebase_elevator_simulator.py`

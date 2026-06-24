@@ -294,7 +294,7 @@ class Installer:
             data.pop("_comment", None)
             return data
         except Exception:
-            return {"tags": {}, "settings": {}, "notifications": {}}
+            return {"tags": {}, "settings": {}}
 
     def backup_config(self) -> Optional[str]:
         """גיבוי timestamped של config קיים לפני דריסה (בסגנון deploy_elevator.sh)."""
@@ -311,8 +311,7 @@ class Installer:
             self.emit(f"אזהרה: גיבוי config נכשל: {e}", "warn")
             return None
 
-    def write_config(self, settings: dict, tags: dict,
-                     notifications: Optional[dict] = None) -> StepResult:
+    def write_config(self, settings: dict, tags: dict) -> StepResult:
         """בונה ושומר את rfid_config.json. מאמת JSON ומגבה קודם."""
         self.emit("כותב את rfid_config.json…", "step")
         cfg = self.load_config()
@@ -322,8 +321,6 @@ class Installer:
         cfg["settings"].update({k: v for k, v in settings.items() if v is not None and v != ""})
         if tags is not None:
             cfg["tags"] = tags
-        if notifications is not None:
-            cfg["notifications"] = notifications
 
         # ולידציה: ערכים חיוניים
         s = cfg["settings"]
@@ -603,7 +600,6 @@ class Installer:
 
     # ── התקנה מלאה בסדר הנכון ─────────────────────────────────────────────────
     def install_all(self, settings: dict, tags: dict,
-                    notifications: Optional[dict] = None,
                     rpi_connect: bool = True, rpi_connect_lite: bool = False) -> list[StepResult]:
         results = [
             self.install_system_packages(),
@@ -611,7 +607,7 @@ class Installer:
             self.setup_serial_permissions(),
             self.setup_python_env(),
             self.setup_directories(),
-            self.write_config(settings, tags, notifications),
+            self.write_config(settings, tags),
             self.install_services(),
             self.install_web_service(),
             self.install_fleet_agent(),
