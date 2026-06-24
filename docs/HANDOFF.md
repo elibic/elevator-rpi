@@ -32,7 +32,7 @@
 - **ההתראות הוסרו מה-Pi** (נמחקו `shabbat_detector/notifier.py` + `MovementWatchdog` + סקשן
   `notifications` ב-`rfid_config.json`/בטפסים). ה-detector רק כותב מצב ל-Firebase.
 - **מנוהלות מרכזית** מדשבורד האדמין (סקשן **"🔔 התראות"** פר-פרויקט; נשמר ב-Firebase של האדמין).
-- **נשלחות** ע"י **Google Apps Script** אחד לכל הצי (`ramada-web/apps-script/elevator-monitor.gs`),
+- **נשלחות** ע"י **Google Apps Script** אחד לכל הצי (`admin-dashboard/apps-script/elevator-monitor.gs`),
   Trigger מתוזמן (~5 דק'), Email דרך `MailApp` ו-Telegram דרך REST — בלי סודות על אף Pi.
 
 ## מודל נתונים ב-Firebase (מ-setup.html — מחייב)

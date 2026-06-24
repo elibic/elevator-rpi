@@ -45,7 +45,7 @@ sudo ./setup.sh                       # מושך מגיט ומפעיל מחדש
 
 - ההתראות **אינן רצות יותר על ה-Pi**. הן מנוהלות מרכזית מדשבורד האדמין
   (סקשן **"🔔 התראות"** לכל פרויקט) ונשלחות ע"י Google Apps Script
-  (`ramada-web/apps-script`) על בסיס המצב שה-Pi כותב ל-Firebase.
+  (`admin-dashboard/apps-script`) על בסיס המצב שה-Pi כותב ל-Firebase.
 
 ## ניהול ותחזוקה
 

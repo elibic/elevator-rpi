@@ -45,7 +45,7 @@
 
 ## התראות
 - **הוסרו מה-Pi.** ההתראות מנוהלות מרכזית מדשבורד האדמין (סקשן **"🔔 התראות"** לכל
-  פרויקט) ונשלחות ע"י Google Apps Script (`ramada-web/apps-script`) על בסיס המצב
+  פרויקט) ונשלחות ע"י Google Apps Script (`admin-dashboard/apps-script`) על בסיס המצב
   שה-Pi כותב ל-Firebase. אין יותר `notifier.py`, watchdog "אין-תנועה", או סקשן
   `notifications` ב-`rfid_config.json`.
 

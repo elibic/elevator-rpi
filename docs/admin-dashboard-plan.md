@@ -70,7 +70,7 @@
 ונשלחות מרכזית:
 - **ניהול ההגדרות** (נמענים, אילו אירועים, ספים, הפעלה/כיבוי) — בדשבורד האדמין, **פר-פרויקט**
   (סקשן **"🔔 התראות"** בכל כרטיס; נשמר ב-Firebase של האדמין).
-- **השליחה בפועל** — **Google Apps Script** אחד לכל הצי (`ramada-web/apps-script/elevator-monitor.gs`),
+- **השליחה בפועל** — **Google Apps Script** אחד לכל הצי (`admin-dashboard/apps-script/elevator-monitor.gs`),
   עם Trigger מתוזמן (~5 דק'). Email דרך `MailApp` (בלי סוד-SMTP) ו-Telegram דרך REST.
 - מבוסס על המצב שה-Pi כותב ל-Firebase (`SHABBAT_ACTIVE`, `last_seen` וכו') — כולל זיהוי
   **"Pi מת/offline"** בצד המרכזי (Pi שנפל לא מדווח על עצמו).
