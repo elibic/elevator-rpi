@@ -59,8 +59,9 @@
   מרחוק מהדשבורד (`/fleet/{id}/command`), מאומתת ב-`secret_key` (bearer-token, אימות בצד ה-Pi).
   הפקודה מריצה `sudo ./setup.sh`; דיווח `update_status`; הגנת-replay (dedupe + מחיקת הפקודה).
   שירות `fleet-agent` רץ כ-**root**. תיעוד מלא: `docs/fleet-remote-update.md`.
-- `version` שמדווח = תאריך ה-commit (`YYYY.MM.DD`); ה-`LATEST_VERSION` בדשבורד צריך להיות
-  תאריך ה-commit של ה-tip ב-`main` בכל שחרור.
+- `version` שמדווח = תוכן קובץ **`VERSION`** בשורש הריפו (semver, למשל `1.0.0`); אם הקובץ חסר —
+  fallback לתאריך ה-commit. **בכל שחרור: הקפץ את `VERSION` (`1.0.0`→`1.0.1`) ועדכן את `LATEST_VERSION`
+  בדשבורד לאותו ערך.** כך גם תיקונים באותו יום ניתנים להבחנה ולעדכון מרחוק.
 
 ## קבצים עיקריים
 - `elevator_tracker_rfid.py` — מעקב קומות לפי RFID.
