@@ -25,6 +25,8 @@ def main() -> None:
                         help="החזר תג מדומה במקום סריקת חומרה (בדיקות)")
     parser.add_argument("--install-shortcut", action="store_true",
                         help="התקן רק את שירות הכלי-הגרפי + קיצור שולחן-העבודה (בלי אשף)")
+    parser.add_argument("--unattended", action="store_true",
+                        help="התקנה/עדכון ללא שאלות (לעדכון מרחוק / הרצה ללא טרמינל)")
     args = parser.parse_args()
 
     if args.install_shortcut:
@@ -43,7 +45,8 @@ def main() -> None:
                     open_browser=not args.no_browser, mock_serial=args.mock_serial)
     else:
         from . import cli
-        cli.run_cli(dry_run=args.dry_run, mock_serial=args.mock_serial)
+        cli.run_cli(dry_run=args.dry_run, mock_serial=args.mock_serial,
+                    unattended=args.unattended)
 
 
 if __name__ == "__main__":

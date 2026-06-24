@@ -31,6 +31,16 @@ require_root() {
 }
 require_root
 
+# ── הרצה לא-אינטראקטיבית (עדכון מרחוק מה-fleet-agent, או ללא טרמינל) → unattended ──
+# בלי זה אשף ה-installer קורא input() ונופל ב-EOFError. (גם ה-installer מזהה זאת
+# לבד דרך isatty — זו שכבת-הגנה נוספת שמעבירה את הדגל במפורש.)
+if [[ "${FLEET_AGENT_UPDATE:-0}" == "1" || ! -t 0 ]]; then
+  case " ${PY_ARGS[*]:-} " in
+    *" --web "*|*" --unattended "*|*" --install-shortcut "*) : ;;
+    *) PY_ARGS+=("--unattended") ;;
+  esac
+fi
+
 # ── 0. עדכון תמיד מ-git (self-update + re-exec יחיד) ─────────────────────────
 # git pull לא נוגע ב-rfid_config.json (מוחרג). אם setup.sh עצמו עודכן — נריץ
 # את עצמנו פעם אחת מחדש כדי שתמיד תרוץ הגרסה החדשה.
