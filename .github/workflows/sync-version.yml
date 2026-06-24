@@ -1,0 +1,63 @@
+name: Sync VERSION to Firebase
+
+# מסנכרן את קובץ VERSION ל-fleet_config/latest_version ב-DB של האדמין (econtrolelevelev)
+# בכל push ל-main שמשנה את VERSION. כך הדשבורד מסמן "עדכון זמין" אוטומטית — בלי שאף אחד
+# יקליד מספר ובלי פריסת דשבורד. קובץ VERSION בריפו הוא מקור-האמת היחיד.
+#
+# חד-פעמי: הוסף ל-Secrets של ריפו elevator-rpi את FIREBASE_SERVICE_ACCOUNT = אותו JSON של
+# Service Account שכבר הוספת לדשבורד (Firebase Console → Project settings → Service accounts
+# → Generate new private key). ה-SA כותב בגישת-אדמין ולכן עוקף את חוקי-ה-RTDB.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "VERSION"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: כתיבת VERSION ל-fleet_config/latest_version
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          DB_HOST: econtrolelevelev-default-rtdb.europe-west1.firebasedatabase.app
+        run: |
+          set -euo pipefail
+          if [ -z "${SA:-}" ]; then
+            echo "::error::חסר secret FIREBASE_SERVICE_ACCOUNT בריפו elevator-rpi — הוסף את אותו JSON של ה-Service Account שבדשבורד."
+            exit 1
+          fi
+          VER="$(tr -d ' \t\r\n' < VERSION)"
+          [ -n "$VER" ] || { echo "::error::קובץ VERSION ריק"; exit 1; }
+
+          # SA → access token (OAuth2 JWT-bearer, חתום ב-RS256 עם המפתח של ה-SA).
+          SA_FILE="$RUNNER_TEMP/sa.json"; printf '%s' "$SA" > "$SA_FILE"
+          CLIENT_EMAIL="$(jq -r .client_email "$SA_FILE")"
+          jq -r .private_key "$SA_FILE" > "$RUNNER_TEMP/key.pem"
+          NOW="$(date +%s)"; EXP="$((NOW + 3600))"
+          b64() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+          HEADER="$(printf '{"alg":"RS256","typ":"JWT"}' | b64)"
+          CLAIM="$(printf '{"iss":"%s","scope":"https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email","aud":"https://oauth2.googleapis.com/token","iat":%s,"exp":%s}' "$CLIENT_EMAIL" "$NOW" "$EXP" | b64)"
+          SIGNING_INPUT="$HEADER.$CLAIM"
+          SIG="$(printf '%s' "$SIGNING_INPUT" | openssl dgst -sha256 -sign "$RUNNER_TEMP/key.pem" | b64)"
+          JWT="$SIGNING_INPUT.$SIG"
+          TOKEN="$(curl -sS -X POST https://oauth2.googleapis.com/token \
+            --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer' \
+            --data-urlencode "assertion=$JWT" | jq -r .access_token)"
+          [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || { echo "::error::קבלת access token מ-Google נכשלה (בדוק את ה-Service Account)."; exit 1; }
+
+          # PUT ל-RTDB (URL מלא כולל אזור europe-west1) — הערך הוא מחרוזת JSON.
+          echo "מעדכן fleet_config/latest_version = $VER"
+          CODE="$(curl -sS -o "$RUNNER_TEMP/resp" -w '%{http_code}' \
+            -X PUT "https://$DB_HOST/fleet_config/latest_version.json" \
+            -H "Authorization: Bearer $TOKEN" --data-binary "\"$VER\"")"
+          echo "RTDB → HTTP $CODE : $(cat "$RUNNER_TEMP/resp")"
+          [ "$CODE" = "200" ] || { echo "::error::כתיבה ל-RTDB נכשלה (HTTP $CODE)."; exit 1; }
+          echo "✅ fleet_config/latest_version = $VER"

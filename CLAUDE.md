@@ -60,9 +60,11 @@
   הפקודה מריצה `sudo ./setup.sh`; דיווח `update_status`; הגנת-replay (dedupe + מחיקת הפקודה).
   שירות `fleet-agent` רץ כ-**root**. תיעוד מלא: `docs/fleet-remote-update.md`.
 - `version` שמדווח = תוכן קובץ **`VERSION`** בשורש הריפו (semver, למשל `1.0.0`); אם הקובץ חסר —
-  fallback לתאריך ה-commit. **בכל שחרור: הקפץ את `VERSION` (`1.0.0`→`1.0.1`) והזן את אותו מספר
-  בדשבורד** (כפתור ✏️ ליד "גרסה עדכנית" — נשמר ב-Firebase `fleet_config/latest_version`, בלי פריסה
-  מחדש של הדשבורד). כך גם תיקונים באותו יום ניתנים להבחנה ולעדכון מרחוק.
+  fallback לתאריך ה-commit. **שחרור = הקפץ את `VERSION` (`1.0.1`→`1.0.2`) ו-push ל-`main`. זהו.**
+  ה-Action `.github/workflows/sync-version.yml` כותב אוטומטית את `VERSION` ל-Firebase
+  `fleet_config/latest_version`, והדשבורד מסמן "עדכון זמין" לבד — בלי הקלדה ובלי פריסת דשבורד
+  (כפתור ✏️ בדשבורד = דריסה ידנית לחירום). דורש secret `FIREBASE_SERVICE_ACCOUNT` בריפו (אותו SA
+  כמו בדשבורד). כך גם תיקונים באותו יום ניתנים להבחנה ולעדכון מרחוק.
 
 ## קבצים עיקריים
 - `elevator_tracker_rfid.py` — מעקב קומות לפי RFID.
