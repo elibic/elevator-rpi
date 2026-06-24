@@ -1,7 +1,7 @@
 # 🔁 HANDOFF — מערכת מעלית שבת (ECONTROL)
 
-מסמך העברה להמשך עבודה בסשן חדש. **משימות פתוחות: (1) התראות · (2) עדכון ה-RPI הקיימים
-בלי לשבור את הקונפיג.**
+מסמך העברה להמשך עבודה בסשן חדש. **משימה (1) התראות — ✅ בוצעה** (הוסרו מה-Pi, מנוהלות
+מרכזית מהדשבורד + Apps Script). **משימה (2): עדכון ה-RPI הקיימים בלי לשבור את הקונפיג.**
 
 ## רפוזיטוריז וזרימת עבודה
 - **`elibic/elevator-rpi`** — קוד ה-Raspberry Pi (tracker + detector + `installer/` web).
@@ -14,7 +14,7 @@
   עלולה לתת 503 redirect — להשתמש ב-GitHub API `create_branch`.)
 
 ## ⚠️ בטיחות קובץ הקונפיג (משימה 2)
-- `rfid_config.json` (מכיל `SECRET_KEY`, מיפוי תגים, סודות התראות) **מוחרג ב-`.gitignore`**
+- `rfid_config.json` (מכיל `SECRET_KEY` ומיפוי תגים) **מוחרג ב-`.gitignore`**
   → `git pull` **פיזית לא נוגע בו**.
 - **נוהל עדכון בטוח ל-Pi קיים** (על כל Pi בנפרד):
   ```bash
@@ -28,16 +28,12 @@
   של המשתמש (Permission denied). תוקן ב-`setup.sh` החדש, אך Pi על קוד ישן צריך את ה-`chown` קודם.
 - דשבורד מקומי על Pi קיים (לא נוגע בקונפיג): אחרי ה-pull → `sudo ./venv/bin/python -m installer --install-shortcut`.
 
-## 🔔 התראות (משימה 1)
-- **קוד:** `shabbat_detector/notifier.py` (class `Notifier`, `send_test()`, `notify_shabbat_change()`).
-  אירועים: `shabbat_enter`, `shabbat_exit`, `no_movement`.
-- **קונפיג:** `rfid_config.json → notifications` (ערוצים: `telegram{bot_token,chat_id}`,
-  `email{smtp...}`, whatsapp-stub). הסודות חיים רק שם.
-- **טריגר:** `detector.py → _apply_result()` → `notifier.notify_shabbat_change()` (edge-triggered).
-- **בדיקה:** `~/elevator-RFID/venv/bin/python -m shabbat_detector.notifier --test`
-  (או כפתור הבדיקה בכלי הגרפי → `/api/notify-test`).
-- **עריכה ב-UI:** טאב התראות ב-`installer/templates/config.html` + `ramada-web/public/setup.html`.
-- *להתחלה: לקרוא את `notifier.py` במלואו + סכימת ה-notifications ב-`rfid_config.example.json`.*
+## 🔔 התראות (משימה 1) — ✅ בוצעה
+- **ההתראות הוסרו מה-Pi** (נמחקו `shabbat_detector/notifier.py` + `MovementWatchdog` + סקשן
+  `notifications` ב-`rfid_config.json`/בטפסים). ה-detector רק כותב מצב ל-Firebase.
+- **מנוהלות מרכזית** מדשבורד האדמין (סקשן **"🔔 התראות"** פר-פרויקט; נשמר ב-Firebase של האדמין).
+- **נשלחות** ע"י **Google Apps Script** אחד לכל הצי (`ramada-web/apps-script/elevator-monitor.gs`),
+  Trigger מתוזמן (~5 דק'), Email דרך `MailApp` ו-Telegram דרך REST — בלי סודות על אף Pi.
 
 ## מודל נתונים ב-Firebase (מ-setup.html — מחייב)
 - **`elevator_configs/{id}`**: כל הקונפיג + **`SHABBAT_OVERRIDE`** (`auto`/`force_on`/`force_off`

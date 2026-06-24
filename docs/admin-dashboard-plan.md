@@ -34,7 +34,7 @@
    של הפרויקט (apiKey, authDomain, databaseURL, projectId...) → נוסף אוטומטית.
 4. **התחברות**: נדרשת (Firebase Auth, email/password — רק הבעלים).
 5. **עדכון מרחוק**: לכלול **עכשיו** (לא רק תצוגת גרסה).
-6. **ניהול התראות/תזכורות**: עובר ל**אדמין דשבורד**, לא על המעלית עצמה. ← עדכון מאוחר.
+6. **ניהול התראות/תזכורות**: ב**אדמין דשבורד**, לא על המעלית עצמה. ✅ **בוצע** — ראה סקשן ההתראות למטה.
 
 ## 🏗️ התוכנית — 3 חלקים
 
@@ -64,24 +64,17 @@
 רק לאמת את הנתיב המדויק של דף ההגדרות (`/setup`) ואת מבנה ה-Firebase config של פרויקט.
 **דורש צירוף ל-scope של הסשן** (כרגע ה-scope מוגבל ל-`elibic/elevator-rpi` בלבד).
 
-## 🔔 התראות (Email + Telegram) — מצב נוכחי ויעד
-**קיים היום** (`shabbat_detector/notifier.py`, config ב-`rfid_config.json` → `notifications`):
-- שני אירועים: כניסה/יציאה משבת (edge-triggered), ואין-תנועה ≥ N שעות-יום
-  (`MovementWatchdog`, "לא כולל לילה").
-- שני ערוצים: **Telegram** (REST ל-`api.telegram.org`, `bot_token`+`chat_id`),
-  **Email** (SMTP דרך `smtplib`, ב-Gmail צריך App Password). WhatsApp = שלד לא ממומש.
-- best-effort: כשל בשליחה רק נרשם ל-log, לעולם לא מפיל את ה-detector.
-- הסודות (טוקנים/SMTP) חיים רק ב-`rfid_config.json` (מוחרג מ-Git).
-
-**היעד** (לפי ההחלטה): ניהול ההתראות עובר לאדמין דשבורד. הבחנה חשובה:
-- **ניהול ההגדרות** (מי מקבל, אילו אירועים, ספים, הפעלה/כיבוי) → מרכזי בדשבורד, פר-פרויקט.
-- **השליחה בפועל** דורשת רכיב שרץ תמיד. web סטטי לא יכול לשלוח ברקע →
-  צריך **Cloud Function** (או backend תמידי) על ה-Firebase.
-- שתי גישות להחליט בהן בהמשך:
-  1. **שליחה מרכזית מלאה** — Cloud Function שולחת הכל; ה-Pi רק מדווח אירועים.
-     (מזיז את הסודות לענן.)
-  2. **היברידי** — ניהול מרכזי, ההגדרות נדחפות לכל Pi, וה-Pi עדיין שולח. (סודות נשארים על ה-Pi.)
-- **זיהוי "Pi מת/offline" חייב להיות בצד האדמין** (Cloud Function) — Pi שנפל לא מדווח על עצמו.
+## 🔔 התראות (Email + Telegram) — ✅ בוצע (מרכזי)
+**ההחלטה שמומשה: שליחה מרכזית מלאה.** ההתראות **הוסרו לגמרי מה-Pi** (אין יותר
+`notifier.py`/`MovementWatchdog`/סקשן `notifications` ב-`rfid_config.json`), ומנוהלות
+ונשלחות מרכזית:
+- **ניהול ההגדרות** (נמענים, אילו אירועים, ספים, הפעלה/כיבוי) — בדשבורד האדמין, **פר-פרויקט**
+  (סקשן **"🔔 התראות"** בכל כרטיס; נשמר ב-Firebase של האדמין).
+- **השליחה בפועל** — **Google Apps Script** אחד לכל הצי (`ramada-web/apps-script/elevator-monitor.gs`),
+  עם Trigger מתוזמן (~5 דק'). Email דרך `MailApp` (בלי סוד-SMTP) ו-Telegram דרך REST.
+- מבוסס על המצב שה-Pi כותב ל-Firebase (`SHABBAT_ACTIVE`, `last_seen` וכו') — כולל זיהוי
+  **"Pi מת/offline"** בצד המרכזי (Pi שנפל לא מדווח על עצמו).
+- יתרון: אין סודות-התראות על אף Pi, אין כפילות שליחה, וסקריפט אחד מרכזי לכל הפרויקטים.
 
 ## 🔑 מה צריך כדי להתחיל לבנות
 1. **config של פרויקט ה-Firebase של האדמין** (apiKey, authDomain, databaseURL, projectId...) —
@@ -94,9 +87,8 @@
 - `shabbat_detector/firebase_client.py` — wrapper ל-Firebase RTDB REST (SSE streams + PATCH/POST).
   מבנה ה-DB: `/elevators/{id}` (קומה חיה), `/elevator_configs/{id}`, `/settings`,
   `/logs/shabbat_detector/{id}`.
-- `shabbat_detector/notifier.py` — מנגנון ההתראות (Telegram/Email/Watchdog).
 - `shabbat_detector/detector.py` — ה-detector הראשי שמחבר הכול.
-- `rfid_config.example.json` — תבנית הקונפיג (כולל סקשן `notifications`).
+- `rfid_config.example.json` — תבנית הקונפיג (ההתראות הוסרו — מנוהלות מרכזית בדשבורד).
 - שירות systemd: `shabbat-detector`.
 
 ## ▶️ הצעד הבא
