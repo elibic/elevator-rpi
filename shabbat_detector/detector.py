@@ -328,7 +328,14 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                     prev_override, new_override, effective,
                 )
                 if not test_mode:
-                    fb.patch_elevator_config({"SHABBAT_ACTIVE": effective})
+                    # רושמים זמן-מעבר טרי גם בשינוי override ידני (לא רק במעבר-FSM),
+                    # כדי שההתראה במייל תציג מתי המצב באמת התחלף. ממזגים את שאר שדות
+                    # SHABBAT_DETECTOR מ-el_config כדי לא לדרוס state/last_cycle_summary וכו'.
+                    sd = dict(el_config.get("SHABBAT_DETECTOR") or {})
+                    sd["state"] = fsm.state.value
+                    sd["last_transition_ts"] = int(time.time() * 1000)
+                    sd["last_transition_reason"] = "override ידני: " + new_override
+                    fb.patch_elevator_config({"SHABBAT_ACTIVE": effective, "SHABBAT_DETECTOR": sd})
 
     def on_settings_update(new_settings: dict) -> None:
         nonlocal settings
