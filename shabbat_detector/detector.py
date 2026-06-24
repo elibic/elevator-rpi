@@ -323,19 +323,23 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                 # FSM decision is unaffected; we just rewrite what kiosks see.
                 fsm_says = (fsm.state == DetectorState.SHABBAT)
                 effective = _apply_override(fsm_says, new_override)
+                prev_effective = _apply_override(fsm_says, prev_override)
                 log.info(
                     "SHABBAT_OVERRIDE %s -> %s ; SHABBAT_ACTIVE := %s",
                     prev_override, new_override, effective,
                 )
                 if not test_mode:
-                    # רושמים זמן-מעבר טרי גם בשינוי override ידני (לא רק במעבר-FSM),
-                    # כדי שההתראה במייל תציג מתי המצב באמת התחלף. ממזגים את שאר שדות
-                    # SHABBAT_DETECTOR מ-el_config כדי לא לדרוס state/last_cycle_summary וכו'.
-                    sd = dict(el_config.get("SHABBAT_DETECTOR") or {})
-                    sd["state"] = fsm.state.value
-                    sd["last_transition_ts"] = int(time.time() * 1000)
-                    sd["last_transition_reason"] = "override ידני: " + new_override
-                    fb.patch_elevator_config({"SHABBAT_ACTIVE": effective, "SHABBAT_DETECTOR": sd})
+                    updates = {"SHABBAT_ACTIVE": effective}
+                    # רושמים זמן-מעבר טרי רק כשהמצב המוצג באמת מתחלף (לא כשהוא נשאר זהה,
+                    # למשל force_off בזמן שה-FSM ממילא כבוי) — כדי שלא ניצור "מעבר" מדומה.
+                    # ממזגים את שאר שדות SHABBAT_DETECTOR כדי לא לדרוס state/last_cycle_summary.
+                    if effective != prev_effective:
+                        sd = dict(el_config.get("SHABBAT_DETECTOR") or {})
+                        sd["state"] = fsm.state.value
+                        sd["last_transition_ts"] = int(time.time() * 1000)
+                        sd["last_transition_reason"] = "override ידני: " + new_override
+                        updates["SHABBAT_DETECTOR"] = sd
+                    fb.patch_elevator_config(updates)
 
     def on_settings_update(new_settings: dict) -> None:
         nonlocal settings
