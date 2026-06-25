@@ -94,6 +94,8 @@ def _run_unattended(inst: core.Installer) -> None:
         _progress(f"אזהרה: דילוג על כתיבת קונפיג ({res.detail}); מרענן שירותים בלבד.", "warn")
 
     inst.install_services()
+    inst.install_web_service()
+    inst.install_fleet_agent()
     inst.install_desktop_shortcut()
     inst.start_services()
 
@@ -159,6 +161,8 @@ def run_cli(dry_run: bool = False, mock_serial: bool = False, unattended: bool =
 
     # שלבים 7–9: שירותים + קיצור + הפעלה
     inst.install_services()
+    inst.install_web_service()
+    inst.install_fleet_agent()
     inst.install_desktop_shortcut()
     inst.start_services()
 
