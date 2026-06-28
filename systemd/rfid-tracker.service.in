@@ -10,6 +10,10 @@ StartLimitIntervalSec=0
 Type=simple
 User={{USER}}
 WorkingDirectory={{PROJECT_DIR}}
+# הקונפיג עלול להישאר בבעלות root אחרי עריכה/עדכון ידני כ-root, ואז השירות (שרץ
+# כ-{{USER}}) נכשל ב-PermissionError. תחילית '+' מריצה את ה-chown כ-root עוד לפני
+# ההפעלה, כך שהשירות מתקן את עצמו בכל start - בלי תלות בהרצת setup.sh.
+ExecStartPre=+/bin/sh -c 'chown {{USER}}:{{USER}} {{PROJECT_DIR}}/rfid_config.json 2>/dev/null || true'
 # המתנה לקיום פורט הסיריאל (עד 60 שניות) לפני פתיחתו - מחליף את ה-sleep הקבוע,
 # ומונע כשל באתחול כש-fix_cp210x עדיין מאתחל את ה-USB. ממשיכים גם אם לא הופיע,
 # וה-tracker ייכשל-ויחזור (Restart=always) עד שהפורט יהיה זמין.
