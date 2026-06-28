@@ -191,8 +191,11 @@
 לאותו `/fleet/{id}/command` (כפתור **"גבה לוגים"** בכרטיס המעלית). הסוכן מאמת את ה-`secret_key`
 (אותה הגנת-replay כמו `update`), ומריץ את `shabbat_detector/log_backup.py`:
 
-- כל Pi דוחף את תיקיית `logs/` שלו לתת-תיקייה **`{ELEVATOR_ID}/`** בריפו לוגים **נפרד**
-  (למשל `elibic/elevator-logs`) - כך אין קונפליקטים בין מעליות (`pull --rebase` + retry על מרוץ-ref).
+- כל Pi דוחף את תיקיית `logs/` שלו לתת-תיקייה **`{project}/{ELEVATOR_ID}/`** בריפו לוגים **נפרד**
+  (למשל `elibic/elevator-logs`). ה-`project` נגזר מ-host של `FIREBASE_URL` (תווית ראשונה בלי
+  `-default-rtdb`/`-elev`; `LOG_BACKUP_PREFIX` דורס) - כך אותה מעלית (`B`) בכמה פרויקטים (ramada+nitza)
+  לא מתנגשת, ואין קונפליקטים בין Pi-ים (`pull --rebase` + retry על מרוץ-ref). הדשבורד גוזר את אותו
+  slug מ-`databaseURL` של הפרויקט, כך שקישור "לוגים" בכרטיס מצביע בדיוק לאותה תיקייה.
 - רץ גם **שבועית אוטומטית** (`LOG_BACKUP_ENABLED` + `LOG_BACKUP_INTERVAL_DAYS`), עם `last_backup`
   ב-`state_fleet_{id}.json`. מדווח `backup_status` (`backing_up`/`ok`/`failed: …`) ל-`/fleet/{id}`.
 - **אבטחה:** הריפו יכול להיות ציבורי (אין סודות בלוגים), אבל `push` דורש **token כתיבה**

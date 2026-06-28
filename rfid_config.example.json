@@ -21,9 +21,10 @@
     "FLEET_REPORT_INTERVAL": 300,
     "FLEET_AUTH_TOKEN": "",
 
-    "_log_backup_comment": "גיבוי לוגים לריפו GitHub נפרד (log_backup.py) - אופציונלי. ה-URL יכול להטמיע token עם הרשאת כתיבה לריפו הלוגים בלבד: https://x-access-token:<PAT>@github.com/elibic/elevator-logs.git. גיבוי שבועי + כפתור 'גבה לוגים' בדשבורד.",
+    "_log_backup_comment": "גיבוי לוגים לריפו GitHub נפרד (log_backup.py) - אופציונלי. ה-URL יכול להטמיע token עם הרשאת כתיבה לריפו הלוגים בלבד: https://x-access-token:<PAT>@github.com/elibic/elevator-logs.git. נכתב לתת-תיקייה {project}/{ELEVATOR_ID}/ (ה-project נגזר אוטומטית מ-FIREBASE_URL; LOG_BACKUP_PREFIX דורס). גיבוי שבועי + כפתור 'גבה לוגים' בדשבורד.",
     "LOG_BACKUP_ENABLED": false,
     "LOG_BACKUP_REPO_URL": "",
+    "LOG_BACKUP_PREFIX": "",
     "LOG_BACKUP_INTERVAL_DAYS": 7
   }
 }

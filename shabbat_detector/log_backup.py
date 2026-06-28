@@ -29,6 +29,7 @@ import re
 import shutil
 import subprocess
 from datetime import datetime
+from urllib.parse import urlsplit
 
 log = logging.getLogger("fleet_agent.log_backup")
 
@@ -50,6 +51,31 @@ def _scrub_text(text: str, secret: str) -> str:
     if secret:
         text = text.replace(secret, "***")
     return _SECRET_KV.sub(r"\1***", text)
+
+
+def _sanitize_slug(s: str) -> str:
+    """Lowercase + keep only [a-z0-9-] so it is safe as a repo folder name."""
+    return re.sub(r"[^a-z0-9-]+", "-", str(s).strip().lower()).strip("-")
+
+
+def project_slug(settings: dict) -> str:
+    """Project identifier for the backup folder, so the same ELEVATOR_ID in two
+    projects (e.g. B in ramada and B in nitza) does not collide.
+
+    `LOG_BACKUP_PREFIX` overrides; otherwise derived from the FIREBASE_URL host -
+    the first label minus a trailing ``-default-rtdb`` and ``-elev`` (so
+    ``ramada-elev-default-rtdb.…`` -> ``ramada``). The dashboard derives the same
+    slug from the project's databaseURL host, so the two always agree."""
+    explicit = str(settings.get("LOG_BACKUP_PREFIX", "")).strip()
+    if explicit:
+        return _sanitize_slug(explicit)
+    raw = str(settings.get("FIREBASE_URL", "") or settings.get("FIREBASE_BASE_URL", "")).strip()
+    host = urlsplit(raw).netloc or raw
+    label = host.split(".")[0]
+    for suffix in ("-default-rtdb", "-elev"):
+        if label.endswith(suffix):
+            label = label[: -len(suffix)]
+    return _sanitize_slug(label)
 
 
 def _run(args: list[str], cwd: str | None = None) -> tuple[int, str]:
@@ -101,8 +127,10 @@ def backup_logs(settings: dict, elevator_id: str, logs_dir: str) -> tuple[bool, 
         _run(["git", "-C", work, "remote", "set-url", "origin", repo_url])  # rotated token
         _run(["git", "-C", work, "pull", "--rebase", "--autostash", "origin", branch])
 
-    # 2. copy a clean (scrubbed) snapshot of logs/ into {elevator_id}/
-    dest = os.path.join(work, elevator_id)
+    # 2. copy a clean (scrubbed) snapshot of logs/ into {project}/{elevator_id}/
+    slug = project_slug(settings)
+    rel = f"{slug}/{elevator_id}" if slug else elevator_id
+    dest = os.path.join(work, *rel.split("/"))
     os.makedirs(dest, exist_ok=True)
     copied = 0
     for fname in sorted(os.listdir(logs_dir)):
@@ -121,14 +149,14 @@ def backup_logs(settings: dict, elevator_id: str, logs_dir: str) -> tuple[bool, 
         return True, "no log files to back up"
 
     # 3. commit (skip an empty commit)
-    _run(["git", "-C", work, "add", elevator_id])
+    _run(["git", "-C", work, "add", rel])
     rc, _ = _run(["git", "-C", work, "diff", "--cached", "--quiet"])
     if rc == 0:
         return True, "no changes"
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     rc, out = _run(["git", "-C", work,
                     "-c", f"user.name={name}", "-c", f"user.email={email}",
-                    "commit", "-m", f"logs: {elevator_id} {stamp}"])
+                    "commit", "-m", f"logs: {rel} {stamp}"])
     if rc != 0:
         return False, f"commit failed: {_redact(out)[:160]}"
 
@@ -139,4 +167,4 @@ def backup_logs(settings: dict, elevator_id: str, logs_dir: str) -> tuple[bool, 
         rc, out = _run(["git", "-C", work, "push", "origin", f"HEAD:{branch}"])
         if rc != 0:
             return False, f"push failed: {_redact(out)[:160]}"
-    return True, f"pushed {copied} file(s)"
+    return True, f"pushed {copied} file(s) to {rel}"
