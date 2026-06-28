@@ -314,10 +314,22 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
             # eval would mark every observed stop as illegal.
             log.info("Config updated remotely (keys=%s)", list((new_cfg or {}).keys()))
             prev_override = (el_config or {}).get("SHABBAT_OVERRIDE", "auto") or "auto"
-            merged = {**el_config, **(new_cfg or {})}
+            # The detector PATCHes /elevator_configs/{id} (SHABBAT_DETECTOR state,
+            # last_cycle_summary, auto-learn suggestions) and ALSO subscribes to
+            # that same node, so every such write echoes back here. Resetting the
+            # CycleAnalyzer on those echoes silently discards the in-progress
+            # cycle and flaps the FSM out of SHABBAT.  Only touch the analyzer
+            # when a field it actually uses changed value.
+            _CYCLE_KEYS = ("TOP_FLOOR", "BOTTOM_FLOOR", "TIME_PER_FLOOR", "FLOOR_WAITS")
+            nc = new_cfg or {}
+            cycle_relevant_changed = any(
+                k in nc and nc[k] != (el_config or {}).get(k) for k in _CYCLE_KEYS
+            )
+            merged = {**el_config, **nc}
             el_config = merged
             stop_threshold = float(merged.get("TIME_PER_FLOOR", 26)) * 0.5
-            analyzer.update_config(merged)
+            if cycle_relevant_changed:
+                analyzer.update_config(merged)
 
             # If SHABBAT_OVERRIDE changed, immediately reflect it in SHABBAT_ACTIVE
             # so kiosks see the switch without waiting for the next elevator event.

@@ -111,16 +111,43 @@ class CycleAnalyzer:
     # ── Public ─────────────────────────────────────────────────────────────────
 
     def update_config(self, config: dict) -> None:
-        """Call whenever the elevator config changes in Firebase."""
-        self.top_floor = str(config.get("TOP_FLOOR", self.top_floor))
-        self.bottom_floor = str(config.get("BOTTOM_FLOOR", self.bottom_floor))
-        self.time_per_floor = float(config.get("TIME_PER_FLOOR", self.time_per_floor))
-        raw_waits = config.get("FLOOR_WAITS") or {}
-        self.floor_waits = {str(k): float(v) for k, v in raw_waits.items()}
+        """Call whenever the elevator config changes in Firebase.
+
+        Only the geometry/timing fields below affect cycle detection.  We reset
+        the in-progress cycle ONLY when one of them actually changed - otherwise
+        an unrelated config write (e.g. the detector's own SHABBAT_DETECTOR echo
+        coming back over the SSE stream) would abandon a perfectly good cycle
+        mid-flight and silently drop it (no abort/idle log), causing phantom
+        "no-cycle" gaps that flap the FSM out of SHABBAT.  Defense-in-depth:
+        the caller (detector.on_config_update) also guards this call.
+        """
+        new_top = str(config.get("TOP_FLOOR", self.top_floor))
+        new_bottom = str(config.get("BOTTOM_FLOOR", self.bottom_floor))
+        new_tpf = float(config.get("TIME_PER_FLOOR", self.time_per_floor))
+        # Absent FLOOR_WAITS means "unchanged" (mirrors the .get(x, self.x) used
+        # for the other fields), so a partial echo can't look like a change.
+        if "FLOOR_WAITS" in config:
+            new_waits = {str(k): float(v) for k, v in (config.get("FLOOR_WAITS") or {}).items()}
+        else:
+            new_waits = self.floor_waits
+
+        changed = (
+            new_top != self.top_floor
+            or new_bottom != self.bottom_floor
+            or new_tpf != self.time_per_floor
+            or new_waits != self.floor_waits
+        )
+
+        self.top_floor = new_top
+        self.bottom_floor = new_bottom
+        self.time_per_floor = new_tpf
+        self.floor_waits = new_waits
         self._stop_threshold = self.time_per_floor * 0.5
         self._floor_order = self._build_floor_order()
-        # Abandon any in-progress cycle; config change may invalidate it
-        self._reset()
+
+        # Abandon any in-progress cycle only when the geometry/timing truly changed.
+        if changed:
+            self._reset()
 
     def push_event(self, event: FloorEvent) -> AnalyzerResult:
         """
