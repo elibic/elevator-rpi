@@ -175,8 +175,35 @@
 | `FLEET_SELF_RESTART` | `true` | restart-עצמי אחרי עדכון מוצלח (לטעון קוד-סוכן חדש). |
 | `FLEET_REPO_DIR` | תיקיית-הריפו | מיקום הריפו (זיהוי אוטומטי מ-`shabbat_detector/`). |
 | `FLEET_AUTH_TOKEN` | `""` | טוקן `?auth=` ל-REST (מודל B). ריק = ללא אימות (מודל A). |
+| `LOG_BACKUP_ENABLED` | `false` | מפעיל גיבוי-לוגים **שבועי אוטומטי** (הכפתור הידני בדשבורד עובד גם בלי זה). |
+| `LOG_BACKUP_REPO_URL` | `""` | https URL לריפו הלוגים, רשאי להטמיע token כתיבה: `https://x-access-token:<PAT>@github.com/elibic/elevator-logs.git`. |
+| `LOG_BACKUP_INTERVAL_DAYS` | `7` | מרווח הגיבוי האוטומטי (ימים). |
+| `LOG_BACKUP_GIT_NAME` / `LOG_BACKUP_GIT_EMAIL` | `elevator-pi` / `…@econtrol.co.il` | זהות ה-commit. |
+| `LOG_BACKUP_DIR` | `/var/lib/elevator-logs` | clone מקומי קבוע (root). |
 
 `ELEVATOR_ID`, `SECRET_KEY`, `FIREBASE_URL` — כבר קיימים בקונפיג; הסוכן משתמש בהם כמו ה-detector.
+
+---
+
+## גיבוי לוגים (`backup_logs`) - שירות-צי שני
+
+לצד `update`, הדשבורד יכול לכתוב פקודת `{ "action": "backup_logs", "secret_key", "requested_at" }`
+לאותו `/fleet/{id}/command` (כפתור **"גבה לוגים"** בכרטיס המעלית). הסוכן מאמת את ה-`secret_key`
+(אותה הגנת-replay כמו `update`), ומריץ את `shabbat_detector/log_backup.py`:
+
+- כל Pi דוחף את תיקיית `logs/` שלו לתת-תיקייה **`{ELEVATOR_ID}/`** בריפו לוגים **נפרד**
+  (למשל `elibic/elevator-logs`) - כך אין קונפליקטים בין מעליות (`pull --rebase` + retry על מרוץ-ref).
+- רץ גם **שבועית אוטומטית** (`LOG_BACKUP_ENABLED` + `LOG_BACKUP_INTERVAL_DAYS`), עם `last_backup`
+  ב-`state_fleet_{id}.json`. מדווח `backup_status` (`backing_up`/`ok`/`failed: …`) ל-`/fleet/{id}`.
+- **אבטחה:** הריפו יכול להיות ציבורי (אין סודות בלוגים), אבל `push` דורש **token כתיבה**
+  שמוטמע ב-`LOG_BACKUP_REPO_URL` - **נפרד** מטוקן משיכת-הקוד (שהוא read-only) ו-scope **רק** לריפו
+  הלוגים. הסוכן מנקה הופעות `secret_key` מהלוגים לפני push, ולעולם לא מתעד את ה-URL עם הטוקן.
+
+## תצוגת מצב-שירותים בדשבורד
+
+ה-heartbeat כולל כעת `services` (מצב 4 שירותי ה-systemd לפי `systemctl is-active`):
+`rfid-tracker`, `shabbat-detector`, `fleet-agent`, `elevator-config-web`. הדשבורד מציג תווית-צבע
+לכל אחד בכרטיס המעלית. השדה נכתב באותו PATCH שנושא `secret_key`, אז חוקי-ה-RTDB על `/fleet` חלים כרגיל.
 
 ---
 

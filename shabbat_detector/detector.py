@@ -48,8 +48,8 @@ logging.basicConfig(
 # ── Persistent weekly-rotating file log ────────────────────────────────────
 # The systemd journal here is RAM-only (wiped on every reboot). This handler
 # keeps a plain-text log on disk that rotates every Tuesday at 00:00 and keeps
-# only 1 rotated file, so the on-disk history resets itself weekly (the user
-# asked for a clean weekly reset) - covering every detector sub-module.
+# 4 rotated files, so there is always ~4 weeks of clear, human-readable history
+# in one place - covering every detector sub-module (fsm, firebase, learner...).
 _LOG_DIR = os.environ.get(
     "SHABBAT_LOG_DIR",
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"),
@@ -60,7 +60,7 @@ try:
         os.path.join(_LOG_DIR, "shabbat_detector.log"),
         when="W1",          # weekly, Tuesday at midnight
         interval=1,
-        backupCount=1,      # keep only the current + 1 rotated file (weekly reset)
+        backupCount=4,      # keep 4 rotated files (~4 weeks)
         encoding="utf-8",
     )
     _file_handler.setFormatter(

@@ -19,6 +19,11 @@
     "_fleet_comment": "ניהול-צי/עדכון-מרחוק (fleet_agent.py) — כל המפתחות אופציונליים, ברירות-מחדל בקוד. ראו docs/fleet-remote-update.md.",
     "FLEET_ENABLED": true,
     "FLEET_REPORT_INTERVAL": 300,
-    "FLEET_AUTH_TOKEN": ""
+    "FLEET_AUTH_TOKEN": "",
+
+    "_log_backup_comment": "גיבוי לוגים לריפו GitHub נפרד (log_backup.py) - אופציונלי. ה-URL יכול להטמיע token עם הרשאת כתיבה לריפו הלוגים בלבד: https://x-access-token:<PAT>@github.com/elibic/elevator-logs.git. גיבוי שבועי + כפתור 'גבה לוגים' בדשבורד.",
+    "LOG_BACKUP_ENABLED": false,
+    "LOG_BACKUP_REPO_URL": "",
+    "LOG_BACKUP_INTERVAL_DAYS": 7
   }
 }

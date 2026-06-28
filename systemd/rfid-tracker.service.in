@@ -1,14 +1,19 @@
 [Unit]
-Description=RFID Elevator Tracker — reads tags and reports floor to Firebase
+Description=RFID Elevator Tracker - reads tags and reports floor to Firebase
 After=network-online.target fix_cp210x.service
-Wants=network-online.target
+Wants=network-online.target fix_cp210x.service
+# לא לוותר על הפעלה-מחדש לעולם: באתחול הפורט עשוי להופיע באיחור, וה-tracker
+# אמור להמשיך לנסות עד שיצליח - במקום להיכנס ל-failed אחרי כמה ניסיונות.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User={{USER}}
 WorkingDirectory={{PROJECT_DIR}}
-# המתנה קצרה כדי לאפשר ל-USB/דרייבר ה-CP210x להופיע לפני פתיחת הפורט.
-ExecStartPre=/bin/sleep 10
+# המתנה לקיום פורט הסיריאל (עד 60 שניות) לפני פתיחתו - מחליף את ה-sleep הקבוע,
+# ומונע כשל באתחול כש-fix_cp210x עדיין מאתחל את ה-USB. ממשיכים גם אם לא הופיע,
+# וה-tracker ייכשל-ויחזור (Restart=always) עד שהפורט יהיה זמין.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -e {{SERIAL_PORT}} ] && exit 0; sleep 1; done; exit 0'
 ExecStart={{PYTHON}} -u {{PROJECT_DIR}}/elevator_tracker_rfid.py
 Restart=always
 RestartSec=10

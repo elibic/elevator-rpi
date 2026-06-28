@@ -13,6 +13,18 @@
 </div>
 
 <div class="card">
+  <h3 class="section-title">גיבוי לוגים (אופציונלי)</h3>
+  <p class="muted">גיבוי שבועי אוטומטי של תיקיית הלוגים לריפו GitHub נפרד, וגם כפתור "גבה לוגים" בדשבורד. כך אפשר לצפות בלוגים בדפדפן בלי RPi Connect.</p>
+  <label><input type="checkbox" id="log_backup_enabled"> הפעל גיבוי לוגים אוטומטי (שבועי)</label>
+  <label>LOG_BACKUP_REPO_URL</label>
+  <input type="password" id="log_backup_repo_url" placeholder="https://x-access-token:&lt;PAT&gt;@github.com/elibic/elevator-logs.git">
+  <p class="muted">ה-token חייב הרשאת כתיבה לריפו הלוגים בלבד - לא לריפו הקוד.</p>
+  <div class="row">
+    <div><label>LOG_BACKUP_INTERVAL_DAYS</label><input type="number" id="log_backup_interval_days" value="7"></div>
+  </div>
+</div>
+
+<div class="card">
   <h3 class="section-title">מיפוי תגים</h3>
   <p class="muted">סרוק תג ליד הקורא והזן את שם הקומה. (סריקה עוצרת זמנית את שירות ה-tracker)</p>
   <div id="tags"></div>

@@ -12,19 +12,25 @@ Data model (must stay in sync with the dashboard)
 
       PATCH /fleet/{ELEVATOR_ID}
           { "version": "<YYYY.MM.DD>", "commit": "<short-sha>",
-            "last_seen": <epoch>, "status": "online", "secret_key": "<…>" }
+            "last_seen": <epoch>, "status": "online", "secret_key": "<…>",
+            "services": { "rfid-tracker": "active", "shabbat-detector": "active",
+                          "fleet-agent": "active", "elevator-config-web": "active" } }
 
   The dashboard marks a Pi *offline* when ``now - last_seen > 660`` and *behind*
-  when ``version !== LATEST_VERSION`` (a ``YYYY.MM.DD`` string it holds).
+  when ``version !== LATEST_VERSION`` (a ``YYYY.MM.DD`` string it holds), and
+  shows a colored badge per entry in ``services``.
 
-* **Command** — the dashboard writes::
+* **Command** — the dashboard writes one of::
 
       /fleet/{ELEVATOR_ID}/command =
-          { "action": "update", "secret_key": "<…>", "requested_at": <epoch> }
+          { "action": "update",      "secret_key": "<…>", "requested_at": <epoch> }
+          { "action": "backup_logs", "secret_key": "<…>", "requested_at": <epoch> }
 
   The agent validates ``secret_key`` against the local ``SECRET_KEY`` (the same
   bearer-token model as ``firebase_client.patch_*``), runs the update command
-  (default ``./setup.sh``), reports ``update_status``, and clears the command.
+  (default ``./setup.sh``) reporting ``update_status``, or backs the logs dir up
+  to the configured repo reporting ``backup_status``, and clears the command.
+  Log backup also runs automatically once a week (``LOG_BACKUP_INTERVAL_DAYS``).
 
 Replay safety
 -------------
@@ -134,6 +140,34 @@ def _truthy(value, default: bool = True) -> bool:
     return str(value).strip().lower() not in ("0", "false", "no", "off", "")
 
 
+# ── systemd service status (for the dashboard's per-service badges) ───────────
+_FLEET_SERVICES = ["rfid-tracker", "shabbat-detector", "fleet-agent", "elevator-config-web"]
+
+
+def _service_status(svc: str) -> str:
+    """systemd state of a unit: 'active' / 'inactive' / 'failed' / 'unknown'.
+
+    `systemctl is-active` prints the state on stdout and exits non-zero for any
+    non-active state, so we read stdout regardless of the return code. On a dev
+    box without systemctl we report 'unknown' instead of crashing the heartbeat.
+    """
+    if shutil.which("systemctl") is None:
+        return "unknown"
+    try:
+        out = subprocess.run(
+            ["systemctl", "is-active", f"{svc}.service"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+    except Exception:
+        return "unknown"
+    return out or "unknown"
+
+
+def _collect_services() -> dict:
+    """{service-name: state} for the 4 units the dashboard shows per elevator."""
+    return {svc: _service_status(svc) for svc in _FLEET_SERVICES}
+
+
 # ── Minimal /fleet REST client ────────────────────────────────────────────────
 class FleetClient:
     """Tiny REST wrapper for ``/fleet/{id}`` — mirrors ``firebase_client`` style.
@@ -199,6 +233,11 @@ class FleetAgent:
         self._self_restart = _truthy(settings.get("FLEET_SELF_RESTART"), True)
         # FLEET_UPDATE_COMMAND: str (shell) | list (argv) | None (default ./setup.sh)
         self._update_cmd = settings.get("FLEET_UPDATE_COMMAND")
+        # Log backup (weekly auto + on-demand from the dashboard) - see log_backup.py.
+        self._settings = settings
+        self._backup_enabled = _truthy(settings.get("LOG_BACKUP_ENABLED"), False)
+        self._backup_interval = float(settings.get("LOG_BACKUP_INTERVAL_DAYS", 7)) * 86400.0
+        self._logs_dir = os.path.join(self._repo, "logs")
 
     # ── state ────────────────────────────────────────────────────────────────
     def _persist(self) -> None:
@@ -211,6 +250,7 @@ class FleetAgent:
             "commit": detect_commit(self._repo),
             "last_seen": int(time.time()),
             "status": status,
+            "services": _collect_services(),
             **extra,
         }
         if self._test_mode:
@@ -221,6 +261,12 @@ class FleetAgent:
     # ── main loop ────────────────────────────────────────────────────────────
     def run(self) -> None:
         self._reconcile()           # finish a previously-interrupted update
+        # Seed last_backup on first ever run so the first automatic backup fires one
+        # interval after install (not on every restart). The manual dashboard button
+        # works immediately regardless of this seed.
+        if self._backup_enabled and not self._state.get("last_backup"):
+            self._state["last_backup"] = int(time.time())
+            self._persist()
         self._report("online")      # immediate heartbeat on boot
         last_report = time.monotonic()
         log.info("Fleet agent ready for elevator %s (report=%ss, poll=%ss)",
@@ -230,36 +276,59 @@ class FleetAgent:
                 self._check_command()
             except Exception as e:
                 log.warning("command check failed: %s", e)
+            try:
+                self._maybe_scheduled_backup()
+            except Exception as e:
+                log.warning("scheduled backup check failed: %s", e)
             now = time.monotonic()
             if now - last_report >= self._report_interval:
                 self._report("online")
                 last_report = now
             time.sleep(self._poll_interval)
 
+    def _maybe_scheduled_backup(self) -> None:
+        """Weekly automatic log backup (gated by LOG_BACKUP_ENABLED + interval)."""
+        if not self._backup_enabled:
+            return
+        last = _as_int(self._state.get("last_backup"))
+        if last and (time.time() - last) < self._backup_interval:
+            return
+        log.info("Weekly log backup due for %s", self._id)
+        ok, detail = self._run_backup()
+        self._state["last_backup"] = int(time.time())
+        self._persist()
+        self._report("online", backup_status=("ok" if ok else f"failed: {detail}"))
+
     # ── command handling ─────────────────────────────────────────────────────
     def _check_command(self) -> None:
         cmd = self._client.get_command()
         if not cmd:
             return
-        if cmd.get("action") != "update":
+        action = cmd.get("action")
+        if action not in ("update", "backup_logs"):
             return  # unknown / no actionable command — ignore
 
         requested_at = _as_int(cmd.get("requested_at"))
         last_done = _as_int(self._state.get("last_command_requested_at"))
 
-        # Replay guard: already handled (or older than) the last one we ran.
+        # Replay guard: already handled (or older than) the last one we ran. The
+        # single counter is shared by both actions - any newer command supersedes.
         if requested_at and requested_at <= last_done:
             self._client.clear_command()   # stale duplicate lingering in the DB
             return
 
         # Authenticate — bearer token, constant-time compare.
         if not hmac.compare_digest(str(cmd.get("secret_key", "")), str(self._key)):
-            log.warning("Rejected update command for %s: bad secret_key", self._id)
-            self._report("online", update_status="rejected: bad secret_key")
+            log.warning("Rejected %s command for %s: bad secret_key", action, self._id)
+            status_field = "backup_status" if action == "backup_logs" else "update_status"
+            self._report("online", **{status_field: "rejected: bad secret_key"})
             self._client.clear_command()
             return
 
-        self._execute_update(requested_at)
+        if action == "backup_logs":
+            self._execute_backup(requested_at)
+        else:
+            self._execute_update(requested_at)
 
     def _execute_update(self, requested_at: int) -> None:
         log.info("Authenticated update command (requested_at=%s) — starting", requested_at)
@@ -289,6 +358,38 @@ class FleetAgent:
         else:
             self._report("online", update_status=f"failed: {detail}")
             log.error("Update FAILED for %s: %s", self._id, detail)
+
+    def _execute_backup(self, requested_at: int) -> None:
+        """On-demand log backup (dashboard 'backup_logs' command). Unlike update,
+        this is not self-modifying, so there is no pending/self-restart dance."""
+        log.info("Authenticated backup_logs command (requested_at=%s)", requested_at)
+        self._state["last_command_requested_at"] = requested_at or int(time.time())
+        self._persist()
+        self._report("online", backup_status="backing_up")
+        self._client.clear_command()       # single-shot: consume the command
+        ok, detail = self._run_backup()
+        if ok:
+            self._state["last_backup"] = int(time.time())
+            self._persist()
+            self._report("online", backup_status="ok")
+            log.info("Log backup OK for %s (%s)", self._id, detail)
+        else:
+            self._report("online", backup_status=f"failed: {detail}")
+            log.error("Log backup FAILED for %s: %s", self._id, detail)
+
+    def _run_backup(self) -> tuple[bool, str]:
+        """Push the logs dir to the configured backup repo. Fails soft (returns
+        a reason) so it can never break the heartbeat loop. On-demand backups run
+        even if LOG_BACKUP_ENABLED is off, as long as a repo URL is configured -
+        backup_logs() itself reports a clear reason when it is not."""
+        if self._test_mode:
+            log.info("[test] would back up logs from %s", self._logs_dir)
+            return True, "test-mode"
+        try:
+            from .log_backup import backup_logs
+            return backup_logs(self._settings, self._id, self._logs_dir)
+        except Exception as e:
+            return False, str(e)[:180]
 
     def _run_update(self) -> tuple[int, str]:
         cmd = self._update_cmd or ["./setup.sh"]
@@ -390,7 +491,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False,
     state_dir = s.get("DETECTOR_STATE_DIR", cfg.get("DETECTOR_STATE_DIR"))
     # Separate state file from the detector's (state_fleet_{id}.json).
     persistence = StatePersistence(f"fleet_{elevator_id}", state_dir)
-    state = persistence.load() or {"last_command_requested_at": 0, "pending_update": None}
+    state = persistence.load() or {"last_command_requested_at": 0, "pending_update": None, "last_backup": 0}
 
     client = FleetClient(base, secret_key, elevator_id, str(s.get("FLEET_AUTH_TOKEN", "")))
     agent = FleetAgent(

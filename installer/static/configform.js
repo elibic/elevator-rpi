@@ -50,6 +50,9 @@ function readForm() {
       SECRET_KEY: v('secret_key'),
       SERIAL_PORT: v('serial_port') || '/dev/ttyUSB0',
       BAUDRATE: parseInt(v('baudrate') || '115200'),
+      LOG_BACKUP_ENABLED: !!(document.getElementById('log_backup_enabled') || {}).checked,
+      LOG_BACKUP_REPO_URL: v('log_backup_repo_url'),
+      LOG_BACKUP_INTERVAL_DAYS: parseInt(v('log_backup_interval_days') || '7'),
     },
     tags: collectTags(),
   };
@@ -61,6 +64,10 @@ function populateForm(cfg) {
   set('firebase_url', s.FIREBASE_URL); set('elevator_id', s.ELEVATOR_ID);
   set('secret_key', s.SECRET_KEY); set('serial_port', s.SERIAL_PORT || '/dev/ttyUSB0');
   set('baudrate', s.BAUDRATE || 115200);
+  const backupChk = document.getElementById('log_backup_enabled');
+  if (backupChk) backupChk.checked = (s.LOG_BACKUP_ENABLED === true || s.LOG_BACKUP_ENABLED === 'true');
+  set('log_backup_repo_url', s.LOG_BACKUP_REPO_URL);
+  set('log_backup_interval_days', s.LOG_BACKUP_INTERVAL_DAYS || 7);
   renderTags(cfg.tags || {});
 }
 

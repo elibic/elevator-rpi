@@ -340,7 +340,9 @@ class Installer:
         self.emit("מתקין שירותי systemd (tracker + detector)…", "step")
         if not self._require_root():
             return StepResult("services", False, "no root")
-        mapping = self._tmpl_mapping()
+        # פורט הסיריאל נדרש בתבנית ה-tracker (לולאת-המתנה לפני פתיחתו) - קוראים מהקונפיג.
+        serial_port = self.load_config().get("settings", {}).get("SERIAL_PORT", "/dev/ttyUSB0")
+        mapping = {**self._tmpl_mapping(), "SERIAL_PORT": serial_port}
         for svc, tmpl in (
             (SERVICE_TRACKER, "rfid-tracker.service.in"),
             (SERVICE_DETECTOR, "shabbat-detector.service.in"),

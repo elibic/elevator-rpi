@@ -4,6 +4,8 @@ After=multi-user.target
 
 [Service]
 Type=oneshot
+# נשאר "active" אחרי שהסתיים, כדי ש-After=fix_cp210x.service של ה-tracker יסתמך עליו אמין.
+RemainAfterExit=yes
 ExecStart=/usr/local/bin/fix_cp210x.sh
 
 [Install]

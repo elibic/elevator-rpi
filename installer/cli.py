@@ -87,6 +87,10 @@ def _run_unattended(inst: core.Installer) -> None:
         "SECRET_KEY": s.get("SECRET_KEY", ""),
         "SERIAL_PORT": s.get("SERIAL_PORT", "/dev/ttyUSB0"),
         "BAUDRATE": s.get("BAUDRATE", 115200),
+        # גיבוי לוגים - round-trip ערכים קיימים (לא נוגעים בקונפיג בעדכון unattended).
+        "LOG_BACKUP_ENABLED": s.get("LOG_BACKUP_ENABLED", False),
+        "LOG_BACKUP_REPO_URL": s.get("LOG_BACKUP_REPO_URL", ""),
+        "LOG_BACKUP_INTERVAL_DAYS": s.get("LOG_BACKUP_INTERVAL_DAYS", 7),
     }
     res = inst.write_config(settings, cfg.get("tags", {}))
     if not res.ok:
@@ -147,7 +151,18 @@ def run_cli(dry_run: bool = False, mock_serial: bool = False, unattended: bool =
         "SECRET_KEY": _ask("SECRET_KEY", s.get("SECRET_KEY", "")),
         "SERIAL_PORT": s.get("SERIAL_PORT", "/dev/ttyUSB0"),
         "BAUDRATE": s.get("BAUDRATE", 115200),
+        "LOG_BACKUP_ENABLED": s.get("LOG_BACKUP_ENABLED", False),
+        "LOG_BACKUP_REPO_URL": s.get("LOG_BACKUP_REPO_URL", ""),
+        "LOG_BACKUP_INTERVAL_DAYS": s.get("LOG_BACKUP_INTERVAL_DAYS", 7),
     }
+    # גיבוי לוגים לריפו GitHub נפרד (אופציונלי) - שבועי + כפתור "גבה לוגים" בדשבורד.
+    if _ask_yes("להפעיל גיבוי לוגים לריפו GitHub?", default=bool(s.get("LOG_BACKUP_ENABLED"))):
+        settings["LOG_BACKUP_ENABLED"] = True
+        settings["LOG_BACKUP_REPO_URL"] = _ask(
+            "LOG_BACKUP_REPO_URL (https עם token כתיבה לריפו הלוגים)",
+            s.get("LOG_BACKUP_REPO_URL", ""))
+    else:
+        settings["LOG_BACKUP_ENABLED"] = False
     if mock_serial:
         tags = cfg.get("tags", {})
         print(f"{DIM}(mock-serial: מדלג על מיפוי תגים){RESET}")

@@ -10,7 +10,7 @@ from datetime import datetime
 CONFIG_FILE = 'rfid_config.json'
 
 # ── Persistent weekly-rotating file log ────────────────────────────────────
-# Plain-text log on disk that rotates every Monday at 00:00 and keeps 7 files,
+# Plain-text log on disk that rotates every Tuesday at 00:00 and keeps 4 files,
 # living alongside the detector log in the shared logs/ directory.
 _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 try:
@@ -21,9 +21,9 @@ try:
     if not _file_logger.handlers:
         _rot = logging.handlers.TimedRotatingFileHandler(
             os.path.join(_LOG_DIR, "rfid_tracker.log"),
-            when="W0",          # weekly, Monday at midnight
+            when="W1",          # weekly, Tuesday at midnight
             interval=1,
-            backupCount=7,      # keep 7 rotated files
+            backupCount=4,      # keep 4 rotated files (~4 weeks)
             encoding="utf-8",
         )
         _rot.setFormatter(
