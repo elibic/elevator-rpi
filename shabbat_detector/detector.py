@@ -47,9 +47,9 @@ logging.basicConfig(
 
 # ── Persistent weekly-rotating file log ────────────────────────────────────
 # The systemd journal here is RAM-only (wiped on every reboot). This handler
-# keeps a plain-text log on disk that rotates every Monday at 00:00 and retains
-# 7 rotated files, so there is always ~7 weeks of clear, human-readable history
-# in one place — covering every detector sub-module (fsm, firebase, learner…).
+# keeps a plain-text log on disk that rotates every Tuesday at 00:00 and keeps
+# only 1 rotated file, so the on-disk history resets itself weekly (the user
+# asked for a clean weekly reset) - covering every detector sub-module.
 _LOG_DIR = os.environ.get(
     "SHABBAT_LOG_DIR",
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"),
@@ -58,9 +58,9 @@ try:
     os.makedirs(_LOG_DIR, exist_ok=True)
     _file_handler = logging.handlers.TimedRotatingFileHandler(
         os.path.join(_LOG_DIR, "shabbat_detector.log"),
-        when="W0",          # weekly, Monday at midnight
+        when="W1",          # weekly, Tuesday at midnight
         interval=1,
-        backupCount=7,      # keep 7 rotated files
+        backupCount=1,      # keep only the current + 1 rotated file (weekly reset)
         encoding="utf-8",
     )
     _file_handler.setFormatter(
@@ -145,13 +145,16 @@ def _apply_result(
         return
 
     if changed:
+        # Precise, self-contained cause line on disk: state change + the exact
+        # reason (which structural check entered/left Shabbat).  This replaces
+        # the old Firebase /logs audit trail (removed - it only ever 401'd and
+        # the user wants on-device logging only).
+        if result.new_state != prev_state:
+            log.info(
+                "SHABBAT TRANSITION %s -> %s | סיבה: %s",
+                prev_state.value, result.new_state.value, result.reason_he,
+            )
         fb.patch_elevator_config(updates)
-        fb.append_detector_log({
-            "from_state": prev_state.value,
-            "to_state": result.new_state.value,
-            "reason": result.reason_he,
-            "cycle_matched": result.last_cycle_summary.get("matched") if result.last_cycle_summary else None,
-        })
     elif result.last_cycle_summary:
         # Always update last_cycle_summary so admin sees it
         fb.patch_elevator_config({
@@ -365,6 +368,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
     _shared = {
         "prev_event": None,                      # type: Optional[FloorEvent]
         "last_event_received_ts": time.time(),   # any Firebase event (incl. dups)
+        "last_missed_fire_ts": 0.0,              # throttle for cadence watchdog
     }
 
     def _full_state() -> dict:
@@ -451,6 +455,50 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                 vresult = fsm.process_violation(v, el_config, now, hebcal_ok)
                 _apply_result(vresult, fsm, fb, prev_state, test_mode, override)
                 _shared["last_event_received_ts"] = now
+                prev_state = fsm.state
+
+            # ── Mechanism 3: Shabbat cadence broke (missed-cycle) ───────────
+            # The elevator may still be moving (so Mechanism 2 stays quiet) but
+            # has stopped producing Shabbat-pattern cycles - the motzaei-Shabbat
+            # case.  If no matching cycle has completed for MISSED_CYCLE_FACTOR x
+            # the config-implied cycle period, raise a violation anchored to the
+            # elevator's own rhythm rather than a fixed clock window.
+            missed_factor = float(tunables.get("MISSED_CYCLE_FACTOR", 0) or 0)
+            period = fsm.expected_cycle_period or ElevatorFSM.expected_cycle_period_from_config(el_config)
+            last_match = fsm.last_clean_cycle_ts
+            gap_needed = missed_factor * period * _TIME_SCALE
+            last_missed_fire = _shared["last_missed_fire_ts"]
+            if (
+                missed_factor > 0
+                and period > 0
+                and last_match > 0
+                # Only once the minimum-stickiness window has passed (exit is
+                # blocked before that anyway) — this keeps the nonmatch counter
+                # from accumulating on blocked ticks and exiting prematurely.
+                and fsm._stickiness_expired(now)
+                # Genuinely off-pattern for the required gap since the LAST real
+                # matching cycle (true anchor, never overwritten here)...
+                and (now - last_match) >= gap_needed
+                # ...and throttle re-fires to once per gap via a separate marker,
+                # so last_clean_cycle_ts keeps meaning "last matching cycle".
+                and (now - last_missed_fire) >= gap_needed
+            ):
+                elapsed_min = (now - last_match) / 60.0
+                v = Violation(
+                    ts=now,
+                    floor="cadence",
+                    reason=(
+                        f"אין מחזור-שבת תקין {elapsed_min:.0f} דקות "
+                        f"({(now - last_match) / period:.1f}x מזמן-המחזור הצפוי)"
+                    ),
+                )
+                log.info("Watchdog: missed-cycle violation (%.0fm since last match)", elapsed_min)
+                # A missed Shabbat period counts as a non-matching cycle, so two
+                # of them satisfy CONSECUTIVE_NONMATCH_FOR_EXIT and drive the exit.
+                fsm._consecutive_nonmatch += 1
+                vresult = fsm.process_violation(v, el_config, now, hebcal_ok)
+                _apply_result(vresult, fsm, fb, prev_state, test_mode, override)
+                _shared["last_missed_fire_ts"] = now
 
     def _watchdog_loop() -> None:
         # Tick every 30s.  Cheap operation when not in SHABBAT/CANDIDATE_EXIT.

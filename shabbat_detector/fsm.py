@@ -101,6 +101,25 @@ class ElevatorFSM:
         # How many configured stops can be missed per leg.
         "ALLOWED_MISSING_STOPS_PER_LEG": 1,
 
+        # ── Structural cycle checks (smart detection) ──────────────
+        # These look at *how* the elevator travels (order, repetition, duration),
+        # not only *which* floors it stopped at — so a busy weekday cycle that
+        # happens to cover the configured stop-set is no longer mistaken for a
+        # Shabbat sweep.  All are validated against the elevator's own config.
+        #
+        # Minimum % of the configured stop-floors that must be visited in a cycle
+        # for it to count as a Shabbat cycle.
+        "MIN_FLOOR_COVERAGE_PCT":        80,
+        # How many direction reversals ("backtracks") are tolerated per leg.
+        # A real Shabbat leg is monotonic (strictly down, then strictly up).
+        "MAX_BACKTRACKS_PER_LEG":        0,
+        # How many times a floor may be re-visited within a single leg.
+        "MAX_REVISITS_PER_LEG":          1,
+        # Allowed +/- deviation of the whole cycle's duration from the duration
+        # implied by the config (2 * floor-span * TIME_PER_FLOOR).  Catches
+        # grossly long (wandering) or short (partial) cycles.  0 disables.
+        "CYCLE_DURATION_TOLERANCE_PCT":  40,
+
         # ── Exit tunables ──────────────────────────────────────────
         # Minimum time the FSM must remain in SHABBAT before any exit logic runs.
         "STICKINESS_MINUTES":            90,
@@ -115,6 +134,15 @@ class ElevatorFSM:
         "INACTIVITY_AT_INVALID_FLOOR_MIN": 10,
         # If we don't receive any tracker reports for this long → violation.
         "NO_REPORT_TIMEOUT_MIN":         15,
+
+        # ── Structure-anchored exit ────────────────────────────────
+        # How many consecutive non-matching completed cycles trigger an exit.
+        # This is anchored to cycle structure rather than a fixed clock window.
+        "CONSECUTIVE_NONMATCH_FOR_EXIT": 2,
+        # If no Shabbat-pattern cycle is seen for this many * the config-implied
+        # cycle period, treat it as a regime break (catches motzaei-Shabbat when
+        # the steady cadence stops).  0 disables the cadence check.
+        "MISSED_CYCLE_FACTOR":           2.5,
     }
 
     # Cooldown between state transitions (prevents rapid flapping)
@@ -137,6 +165,14 @@ class ElevatorFSM:
         # Counter for consecutive matching cycles in NORMAL/CANDIDATE_SHABBAT.
         # Promotes to SHABBAT once it reaches REQUIRED_MATCHING_CYCLES.
         self._consecutive_matches: int = 0
+
+        # Counter for consecutive NON-matching completed cycles while in SHABBAT.
+        # Drives the structure-anchored exit (CONSECUTIVE_NONMATCH_FOR_EXIT).
+        self._consecutive_nonmatch: int = 0
+        # Config-implied nominal duration of one full round trip (seconds).
+        # Refreshed on every completed-cycle evaluation; used by the cadence
+        # ("missed cycle") exit check in the watchdog.
+        self._expected_cycle_period: float = 0.0
 
         # Tunables — initialised from DEFAULTS, overridden by update_settings().
         self._tunables: dict = dict(self.DEFAULTS)
@@ -161,6 +197,34 @@ class ElevatorFSM:
     @property
     def tunables(self) -> dict:
         return dict(self._tunables)
+
+    @property
+    def last_clean_cycle_ts(self) -> float:
+        """Timestamp of the last cycle that matched the Shabbat pattern."""
+        return self._last_clean_cycle_ts
+
+    @property
+    def expected_cycle_period(self) -> float:
+        """Config-implied nominal round-trip duration (seconds); 0 if unknown."""
+        return self._expected_cycle_period
+
+    @staticmethod
+    def expected_cycle_period_from_config(config: dict) -> float:
+        """Nominal full round-trip duration implied by the config.
+
+        Heuristic: 2 * floor-span * TIME_PER_FLOOR.  Used only as a loose
+        gross-outlier guard (with CYCLE_DURATION_TOLERANCE_PCT) and to anchor
+        the cadence-based exit — never as a hard equality.  Returns 0 when the
+        config lacks usable integer terminals.
+        """
+        try:
+            top = int(str(config.get("TOP_FLOOR")).strip())
+            bottom = int(str(config.get("BOTTOM_FLOOR")).strip())
+            tpf = float(config.get("TIME_PER_FLOOR", 26))
+        except (TypeError, ValueError):
+            return 0.0
+        span = abs(top - bottom)
+        return 2.0 * span * tpf if span > 0 else 0.0
 
     # ── Tunable accessors (apply _TIME_SCALE for time-based fields) ────────────
 
@@ -237,6 +301,8 @@ class ElevatorFSM:
             "candidate_exit_started": self._candidate_exit_started,
             "last_clean_cycle_ts": self._last_clean_cycle_ts,
             "consecutive_matches": self._consecutive_matches,
+            "consecutive_nonmatch": self._consecutive_nonmatch,
+            "expected_cycle_period": self._expected_cycle_period,
             "violations": [
                 {"ts": v.ts, "floor": v.floor, "reason": v.reason}
                 for v in self._violations
@@ -257,6 +323,8 @@ class ElevatorFSM:
             fsm._candidate_exit_started = float(fsm._candidate_exit_started)
         fsm._last_clean_cycle_ts = float(d.get("last_clean_cycle_ts", 0))
         fsm._consecutive_matches = int(d.get("consecutive_matches", 0))
+        fsm._consecutive_nonmatch = int(d.get("consecutive_nonmatch", 0))
+        fsm._expected_cycle_period = float(d.get("expected_cycle_period", 0) or 0)
         fsm._violations = [
             Violation(ts=float(v["ts"]), floor=str(v["floor"]), reason=str(v["reason"]))
             for v in d.get("violations", [])
@@ -321,6 +389,67 @@ class ElevatorFSM:
             and len(missing_dn) <= allow_missing
         )
 
+        # ── Structural checks (smart detection) ────────────────────────────────
+        # These are validated against the elevator's OWN config and answer
+        # "did it travel like a Shabbat elevator?", not just "which floors".
+        min_coverage = float(self._tunables["MIN_FLOOR_COVERAGE_PCT"]) / 100.0
+        max_backtracks = int(self._tunables["MAX_BACKTRACKS_PER_LEG"])
+        max_revisits = int(self._tunables["MAX_REVISITS_PER_LEG"])
+        dur_tol = float(self._tunables["CYCLE_DURATION_TOLERANCE_PCT"]) / 100.0
+
+        def _coverage(observed: set, configured: set) -> float:
+            # Fraction of configured stop-floors actually visited.  An elevator
+            # with no configured stops on this leg can't fail coverage.
+            if not configured:
+                return 1.0
+            return len(observed & configured) / len(configured)
+
+        def _ordered_ints(stops: list) -> list:
+            out = []
+            for f in stops or []:
+                s = str(f).strip()
+                if _INT_FLOOR_RE.match(s):
+                    out.append(int(s))
+            return out
+
+        def _backtracks(seq: list, ascending: bool) -> int:
+            # Count direction reversals.  A Shabbat leg is monotonic; repeats
+            # (equal neighbours) are handled by the revisit check, not here.
+            n = 0
+            for a, b in zip(seq, seq[1:]):
+                if ascending and b < a:
+                    n += 1
+                elif not ascending and b > a:
+                    n += 1
+            return n
+
+        def _revisits(seq: list) -> int:
+            return len(seq) - len(set(seq))
+
+        coverage_up = _coverage(observed_up, stops_up_cfg)
+        coverage_dn = _coverage(observed_dn, stops_dn_cfg)
+        coverage_ok = coverage_up >= min_coverage and coverage_dn >= min_coverage
+
+        seq_up = _ordered_ints(cycle.up_stops)
+        seq_dn = _ordered_ints(cycle.down_stops)
+        backtracks_up = _backtracks(seq_up, ascending=True)
+        backtracks_dn = _backtracks(seq_dn, ascending=False)
+        backtracks_ok = backtracks_up <= max_backtracks and backtracks_dn <= max_backtracks
+
+        revisits_up = _revisits(seq_up)
+        revisits_dn = _revisits(seq_dn)
+        revisits_ok = revisits_up <= max_revisits and revisits_dn <= max_revisits
+
+        # Duration sanity vs the config-implied nominal period (gross-outlier guard).
+        expected_period = self.expected_cycle_period_from_config(config)
+        self._expected_cycle_period = expected_period
+        duration_s = cycle.duration_s
+        duration_ratio = (duration_s / expected_period) if expected_period > 0 else 1.0
+        if expected_period > 0 and dur_tol > 0:
+            duration_ok = (1 - dur_tol) <= duration_ratio <= (1 + dur_tol)
+        else:
+            duration_ok = True
+
         # Timing check (±timing_tol) on all stops in this cycle
         timing_exceptions = 0
         timing_details: dict[str, dict] = {}
@@ -340,8 +469,13 @@ class ElevatorFSM:
 
         timing_ok = timing_exceptions <= max_timing_exc
 
+        matches = (
+            floors_ok and timing_ok and coverage_ok
+            and backtracks_ok and revisits_ok and duration_ok
+        )
+
         return {
-            "matches": floors_ok and timing_ok,
+            "matches": matches,
             "illegal_up": illegal_up,
             "illegal_dn": illegal_dn,
             "missing_up": missing_up,
@@ -350,6 +484,20 @@ class ElevatorFSM:
             "timing_details": timing_details,
             "floors_ok": floors_ok,
             "timing_ok": timing_ok,
+            # Structural results (also surfaced in the cause log / summary)
+            "coverage_ok": coverage_ok,
+            "coverage_up": round(coverage_up, 2),
+            "coverage_dn": round(coverage_dn, 2),
+            "backtracks_ok": backtracks_ok,
+            "backtracks_up": backtracks_up,
+            "backtracks_dn": backtracks_dn,
+            "revisits_ok": revisits_ok,
+            "revisits_up": revisits_up,
+            "revisits_dn": revisits_dn,
+            "duration_ok": duration_ok,
+            "duration_s": round(duration_s, 1),
+            "expected_period_s": round(expected_period, 1),
+            "duration_ratio": round(duration_ratio, 2),
         }
 
     # ── State transitions ───────────────────────────────────────────────────────
@@ -412,6 +560,7 @@ class ElevatorFSM:
         if self.state == DetectorState.SHABBAT:
             if matches:
                 self._last_clean_cycle_ts = now
+                self._consecutive_nonmatch = 0
                 self._violations.clear()
                 return FSMResult(
                     new_state=self.state,
@@ -430,6 +579,7 @@ class ElevatorFSM:
                     ),
                     last_cycle_summary=summary,
                 )
+            self._consecutive_nonmatch += 1
             v = Violation(ts=now, floor="cycle", reason=self._mismatch_reason(eval_result))
             self._add_violation(v, now)
             return self._maybe_exit(now, hebcal_in_window, summary)
@@ -438,6 +588,7 @@ class ElevatorFSM:
             if matches:
                 # Clean cycle — return to SHABBAT
                 self._last_clean_cycle_ts = now
+                self._consecutive_nonmatch = 0
                 self._violations.clear()
                 self._candidate_exit_started = None
                 return self._transition_to(DetectorState.SHABBAT, now, FSMResult(
@@ -446,6 +597,7 @@ class ElevatorFSM:
                     reason_he="מחזור תקין — חזרה למצב שבת",
                     last_cycle_summary=summary,
                 ))
+            self._consecutive_nonmatch += 1
             v = Violation(ts=now, floor="cycle", reason=self._mismatch_reason(eval_result))
             self._add_violation(v, now)
             return self._maybe_exit(now, hebcal_in_window, summary)
@@ -461,11 +613,23 @@ class ElevatorFSM:
         self._shabbat_entered_at = now
         self._violations.clear()
         self._consecutive_matches = 0
+        self._consecutive_nonmatch = 0
         self._last_clean_cycle_ts = now
+        # Precise entry cause: name the evidence (coverage, monotonic, duration).
+        cov_up = int((summary.get("coverage_up") or 1) * 100)
+        cov_dn = int((summary.get("coverage_dn") or 1) * 100)
+        reason = (
+            "נכנס למצב שבת — מחזור תאם הגדרות: "
+            f"כיסוי עלייה {cov_up}% / ירידה {cov_dn}%, "
+            f"נסיעה רצופה (0 קפיצות-אחורה), "
+            f"משך {summary.get('duration_s')}s "
+            f"({summary.get('duration_ratio')}× הצפוי {summary.get('expected_period_s')}s), "
+            f"{summary.get('timing_exceptions', 0)} חריגות טיימינג"
+        )
         return self._transition_to(DetectorState.SHABBAT, now, FSMResult(
             new_state=DetectorState.SHABBAT,
             shabbat_active=True,
-            reason_he="מחזור מלא תאם הגדרות — נכנס למצב שבת",
+            reason_he=reason,
             last_cycle_summary=summary,
         ))
 
@@ -480,13 +644,28 @@ class ElevatorFSM:
         window_min = int(self._tunables["VIOLATION_WINDOW_MINUTES"])
         recent = [v for v in self._violations if now - v.ts <= window_s]
 
-        if len(recent) >= threshold:
+        # Two independent triggers, whichever fires first:
+        #  (1) classic: enough violations inside the rolling time window, or
+        #  (2) structural: N consecutive non-matching completed cycles.  The
+        #      latter is anchored to cycle structure, not the wall clock, so a
+        #      post-Shabbat run of chaotic cycles exits promptly even when the
+        #      violations are spread further apart than VIOLATION_WINDOW_MINUTES.
+        nonmatch_n = self._consecutive_nonmatch
+        nonmatch_needed = int(self._tunables["CONSECUTIVE_NONMATCH_FOR_EXIT"])
+        window_trigger = len(recent) >= threshold
+        nonmatch_trigger = nonmatch_needed > 0 and nonmatch_n >= nonmatch_needed
+
+        if window_trigger or nonmatch_trigger:
+            if window_trigger:
+                why = f"{len(recent)} חריגות תוך {window_min} דקות"
+            else:
+                why = f"{nonmatch_n} מחזורים חריגים ברצף"
             if self.state == DetectorState.SHABBAT:
                 self._candidate_exit_started = now
                 return self._transition_to(DetectorState.CANDIDATE_EXIT, now, FSMResult(
                     new_state=DetectorState.CANDIDATE_EXIT,
                     shabbat_active=None,
-                    reason_he=f"{len(recent)} חריגות תוך {window_min} דקות — ממתין לאישור יציאה",
+                    reason_he=f"{why} — ממתין לאישור יציאה",
                     last_cycle_summary=summary,
                 ))
             elif self.state == DetectorState.CANDIDATE_EXIT:
@@ -494,7 +673,7 @@ class ElevatorFSM:
                 return self._transition_to(DetectorState.NORMAL, now, FSMResult(
                     new_state=DetectorState.NORMAL,
                     shabbat_active=False,
-                    reason_he=f"יציאה ממצב שבת — {len(recent)} חריגות זוהו",
+                    reason_he=f"יציאה ממצב שבת — {why}",
                     last_cycle_summary=summary,
                 ))
 
@@ -570,19 +749,45 @@ class ElevatorFSM:
             "missing_up": eval_result["missing_up"],
             "missing_dn": eval_result["missing_dn"],
             "timing_exceptions": eval_result["timing_exceptions"],
+            # Structural results — surfaced to the admin UI and the cause log.
+            "coverage_up": eval_result.get("coverage_up"),
+            "coverage_dn": eval_result.get("coverage_dn"),
+            "backtracks_up": eval_result.get("backtracks_up"),
+            "backtracks_dn": eval_result.get("backtracks_dn"),
+            "revisits_up": eval_result.get("revisits_up"),
+            "revisits_dn": eval_result.get("revisits_dn"),
+            "expected_period_s": eval_result.get("expected_period_s"),
+            "duration_ratio": eval_result.get("duration_ratio"),
         }
 
     @staticmethod
     def _mismatch_reason(er: dict) -> str:
+        # Build a precise, human-readable cause naming exactly which check failed.
         parts = []
         if er.get("illegal_up"):
             parts.append(f"עצירות לא חוקיות בעלייה: {er['illegal_up']}")
         if er.get("illegal_dn"):
             parts.append(f"עצירות לא חוקיות בירידה: {er['illegal_dn']}")
-        if er.get("missing_up") and len(er["missing_up"]) > 1:
-            parts.append(f"עצירות חסרות בעלייה: {er['missing_up']}")
-        if er.get("missing_dn") and len(er["missing_dn"]) > 1:
-            parts.append(f"עצירות חסרות בירידה: {er['missing_dn']}")
+        if not er.get("coverage_ok", True):
+            parts.append(
+                f"כיסוי קומות חלקי (עלייה {int((er.get('coverage_up') or 0)*100)}%, "
+                f"ירידה {int((er.get('coverage_dn') or 0)*100)}%)"
+            )
+        if not er.get("backtracks_ok", True):
+            parts.append(
+                f"קפיצות-אחורה (עלייה {er.get('backtracks_up', 0)}, "
+                f"ירידה {er.get('backtracks_dn', 0)})"
+            )
+        if not er.get("revisits_ok", True):
+            parts.append(
+                f"חזרות על קומות (עלייה {er.get('revisits_up', 0)}, "
+                f"ירידה {er.get('revisits_dn', 0)})"
+            )
+        if not er.get("duration_ok", True):
+            parts.append(
+                f"משך חריג {er.get('duration_s')}s "
+                f"({er.get('duration_ratio')}× הצפוי {er.get('expected_period_s')}s)"
+            )
         if er.get("timing_exceptions", 0) > 0:
             parts.append(f"{er['timing_exceptions']} חריגות טיימינג")
         return "; ".join(parts) if parts else "מחזור לא תאם"
