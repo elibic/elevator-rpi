@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import threading
 import time
 from datetime import datetime
@@ -19,8 +20,10 @@ import requests
 
 log = logging.getLogger(__name__)
 
-# Reconnect delay on stream error (seconds)
-_RECONNECT_DELAY = 10
+# Reconnect backoff on stream error (seconds): exponential with jitter, capped,
+# so a fleet-wide Firebase blip does not have every Pi reconnect in lockstep (#24).
+_RECONNECT_BASE = 2
+_RECONNECT_CAP = 60
 
 
 class FirebaseClient:
@@ -123,16 +126,21 @@ class FirebaseClient:
         """
         url = f"{self._base}/elevators/{self._elevator_id}.json"
         last_floor: Optional[str] = None
+        attempt = 0
         while True:
             try:
                 for raw in self._sse_stream(url):
                     floor = str(raw.get("floor", "")) if raw.get("floor") is not None else None
                     if floor and floor != last_floor:
                         last_floor = floor
+                        attempt = 0   # healthy data - reset reconnect backoff
                         yield raw
             except Exception as e:
-                log.warning("Elevator stream error: %s — reconnecting in %ds", e, _RECONNECT_DELAY)
-                time.sleep(_RECONNECT_DELAY)
+                log.warning("Elevator stream error: %s", e)
+            delay = self._backoff_delay(attempt)
+            attempt += 1
+            log.warning("Elevator stream reconnecting in %.0fs", delay)
+            time.sleep(delay)
 
     # ── Writes ────────────────────────────────────────────────────────────────
 
@@ -184,11 +192,13 @@ class FirebaseClient:
                 if msg.event in ("put", "patch") and msg.data:
                     try:
                         payload = json.loads(msg.data)
-                        data = payload.get("data") or {}
-                        if isinstance(data, dict) and data:
-                            yield data
                     except (json.JSONDecodeError, AttributeError):
-                        pass
+                        continue
+                    change = self._addressed_change(
+                        payload.get("path", "/"), payload.get("data")
+                    )
+                    if change:
+                        yield change
         except ImportError:
             # sseclient not installed — poll every 2 seconds
             log.warning("sseclient not available; falling back to 2-second polling")
@@ -213,13 +223,38 @@ class FirebaseClient:
                 log.debug("Poll error: %s", e)
             time.sleep(2)
 
+    def _addressed_change(self, path: str, data) -> Optional[dict]:
+        """Turn an SSE (path, data) frame into a dict addressed at the subscribed
+        node's root.  Firebase sends leaf writes as {path:'/SHABBAT_OVERRIDE',
+        data:'force_off'} and child patches as {path:'/SHABBAT_DETECTOR',
+        data:{...}}; the old code only handled root-level dicts and silently
+        dropped the rest - which is how a dashboard write that flipped an override
+        back to 'auto' could never reach the Pi (#18)."""
+        segs = [s for s in str(path or "/").split("/") if s]
+        if not segs:
+            # Root put/patch: a whole-node snapshot or a root-level merge.
+            return data if isinstance(data, dict) else None
+        node = data
+        for seg in reversed(segs):
+            node = {seg: node}
+        return node
+
+    def _backoff_delay(self, attempt: int) -> float:
+        """Exponential reconnect backoff with 50-100% jitter, capped (#24)."""
+        base = min(_RECONNECT_CAP, _RECONNECT_BASE * (2 ** min(attempt, 10)))
+        return base / 2.0 + random.uniform(0.0, base / 2.0)
+
     def _stream_loop(self, path: str, callback) -> None:
         """Background loop for config/settings SSE streams."""
         url = f"{self._base}/{path.lstrip('/')}"
+        attempt = 0
         while True:
             try:
                 for data in self._sse_stream(url):
+                    attempt = 0   # healthy data - reset reconnect backoff
                     callback(data)
             except Exception as e:
                 log.warning("Background stream error (%s): %s", path, e)
-            time.sleep(_RECONNECT_DELAY)
+            delay = self._backoff_delay(attempt)
+            attempt += 1
+            time.sleep(delay)
