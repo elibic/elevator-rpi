@@ -115,8 +115,9 @@ class ElevatorFSM:
         "MAX_BACKTRACKS_PER_LEG":        0,
         # How many times a floor may be re-visited within a single leg.
         "MAX_REVISITS_PER_LEG":          1,
-        # Allowed +/- deviation of the whole cycle's duration from the duration
-        # implied by the config (2 * floor-span * TIME_PER_FLOOR).  Catches
+        # Allowed +/- deviation of the whole cycle's duration from the
+        # config-implied period (see expected_cycle_period_from_config, which
+        # models per-direction stop floors and per-floor dwells).  Catches
         # grossly long (wandering) or short (partial) cycles.  0 disables.
         "CYCLE_DURATION_TOLERANCE_PCT":  40,
 
@@ -212,10 +213,23 @@ class ElevatorFSM:
     def expected_cycle_period_from_config(config: dict) -> float:
         """Nominal full round-trip duration implied by the config.
 
-        Heuristic: 2 * floor-span * TIME_PER_FLOOR.  Used only as a loose
-        gross-outlier guard (with CYCLE_DURATION_TOLERANCE_PCT) and to anchor
-        the cadence-based exit — never as a hard equality.  Returns 0 when the
-        config lacks usable integer terminals.
+        Models the ACTUAL Shabbat sweep rather than assuming a stop at every
+        floor in both directions.  Real cars differ per direction - express one
+        way and local the other, or an odd/even split between two cars - and
+        some floors (a lobby) dwell far longer than others.  So:
+
+            period = travel(all gaps, both legs)
+                     + dwell(each STOPPING_FLOORS_UP floor)
+                     + dwell(each STOPPING_FLOORS_DOWN floor)
+
+        A stop's dwell is FLOOR_WAITS[floor] when given, else TIME_PER_FLOOR;
+        travel per floor-gap is TIME_PASS_FLOOR.  Used as a loose gross-outlier
+        guard (with CYCLE_DURATION_TOLERANCE_PCT) and to anchor the cadence
+        exit - never as a hard equality.
+
+        Falls back to the old 2 * span * TIME_PER_FLOOR heuristic when the
+        per-direction stop lists are absent.  Returns 0 when the config lacks
+        usable integer terminals.
         """
         try:
             top = int(str(config.get("TOP_FLOOR")).strip())
@@ -224,7 +238,23 @@ class ElevatorFSM:
         except (TypeError, ValueError):
             return 0.0
         span = abs(top - bottom)
-        return 2.0 * span * tpf if span > 0 else 0.0
+        if span <= 0:
+            return 0.0
+
+        stops_up = [str(f).strip() for f in (config.get("STOPPING_FLOORS_UP") or [])]
+        stops_dn = [str(f).strip() for f in (config.get("STOPPING_FLOORS_DOWN") or [])]
+        if not stops_up or not stops_dn:
+            # No per-direction stop data - fall back to the old symmetric guess.
+            return 2.0 * span * tpf
+
+        tpass = float(config.get("TIME_PASS_FLOOR", 2.0))
+        waits = {str(k).strip(): float(v)
+                 for k, v in (config.get("FLOOR_WAITS") or {}).items()}
+
+        travel = 2.0 * span * tpass
+        dwell_up = sum(waits.get(f, tpf) for f in stops_up)
+        dwell_dn = sum(waits.get(f, tpf) for f in stops_dn)
+        return travel + dwell_up + dwell_dn
 
     # ── Tunable accessors (apply _TIME_SCALE for time-based fields) ────────────
 
