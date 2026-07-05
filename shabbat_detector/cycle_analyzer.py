@@ -15,8 +15,14 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-# How long with no movement before we abandon a partial cycle (seconds).
+# Floor for the idle-abandon gap (seconds).  _idle_reset_seconds() lifts this
+# above the longest configured dwell so a legitimate long hold is never treated
+# as idle (#15).
 IDLE_RESET_SECONDS = 300
+
+# How many floors short of the far terminal still counts as "reached it", so a
+# single missed terminal-tag read does not discard an otherwise-full cycle (#14).
+TERMINAL_MISS_TOLERANCE = 1
 
 
 # ── Data structures ────────────────────────────────────────────────────────────
@@ -170,11 +176,17 @@ class CycleAnalyzer:
         gap = event.timestamp - prev.timestamp
 
         # Idle gap mid-cycle → abandon
-        if gap > IDLE_RESET_SECONDS and self._phase != _Phase.WAITING:
+        if gap > self._idle_reset_seconds() and self._phase != _Phase.WAITING:
             log.info(
-                "Elevator idle %.0fs — resetting cycle (was in %s)", gap, self._phase
+                "Elevator idle %.0fs - resetting cycle (was in %s)", gap, self._phase
             )
             self._reset()
+            # If it was parked AT a terminal, re-arm a fresh cycle there (from the
+            # moment it leaves) so the upcoming leg is captured instead of waiting
+            # for the next terminal touch and dropping a half-cycle (#15).
+            prev_term = self._terminal(prev.floor)
+            if prev_term:
+                self._start_cycle(prev_term, event.timestamp)
 
         # Compute dwell of the *previous* floor (we now know when it left)
         dwell = max(0.0, gap)
@@ -228,6 +240,60 @@ class CycleAnalyzer:
     def _opposite(self, terminal: str) -> str:
         return "TOP" if terminal == "BOTTOM" else "BOTTOM"
 
+    def _terminal_floor(self, terminal: str) -> str:
+        return self.bottom_floor if terminal == "BOTTOM" else self.top_floor
+
+    def _idle_reset_seconds(self) -> float:
+        """Idle gap that abandons a partial cycle, kept safely above the longest
+        legitimate dwell (a long FLOOR_WAITS hold or the terminal park) so a
+        normal hold is never treated as idle - derived from config, not a bare
+        constant (#15)."""
+        longest_dwell = self.time_per_floor
+        if self.floor_waits:
+            longest_dwell = max(longest_dwell, max(self.floor_waits.values()))
+        return max(float(IDLE_RESET_SECONDS), 4.0 * longest_dwell)
+
+    def _try_complete_missed_apex(
+        self, prev_record: StopRecord, curr_event: FloorEvent
+    ) -> Optional[Cycle]:
+        """LEG_ONE bounced back to the start terminal.  If the leg reached within
+        TERMINAL_MISS_TOLERANCE floors of the far terminal, treat it as a full
+        round trip whose apex read was missed: split the merged leg at its apex
+        and build the cycle.  Returns the Cycle, or None for a genuine partial
+        trip that should abort (#14)."""
+        records = self._leg1 + [prev_record]
+        try:
+            start_idx = int(self._terminal_floor(self._start_terminal))
+            opp_idx = int(self._terminal_floor(self._opposite(self._start_terminal)))
+        except (TypeError, ValueError):
+            return None
+
+        def dist(floor: str) -> Optional[int]:
+            try:
+                return abs(int(floor) - start_idx)
+            except (TypeError, ValueError):
+                return None
+
+        dists = [(i, dist(r.floor)) for i, r in enumerate(records)]
+        dists = [(i, d) for i, d in dists if d is not None]
+        if not dists:
+            return None
+        apex_dist = max(d for _, d in dists)
+        if abs(opp_idx - start_idx) - apex_dist > TERMINAL_MISS_TOLERANCE:
+            return None   # turned around too early - a real partial trip
+
+        apex_pos = next(i for i, d in dists if d == apex_dist)   # first apex record
+        self._leg1 = records[: apex_pos + 1]
+        self._leg2 = records[apex_pos + 1:]
+        cycle = self._build_cycle(curr_event.timestamp)
+        log.info(
+            "Cycle recovered (missed %s-terminal read): %.0fs, up_stops=%s, down_stops=%s",
+            self._opposite(self._start_terminal), cycle.duration_s,
+            cycle.up_stops, cycle.down_stops,
+        )
+        self._start_cycle(self._start_terminal, curr_event.timestamp)
+        return cycle
+
     def _reset(self) -> None:
         self._phase = _Phase.WAITING
         self._start_terminal = None
@@ -269,7 +335,14 @@ class CycleAnalyzer:
                 return None, False
 
             if curr_terminal == self._start_terminal:
-                # Bounced back — abort and restart the cycle at this terminal
+                # Returned to start without registering the far terminal.  If the
+                # leg got within TERMINAL_MISS_TOLERANCE floors of it, this was a
+                # full round trip whose apex tag read was simply missed - recover
+                # it instead of discarding an otherwise-complete cycle (#14).
+                recovered = self._try_complete_missed_apex(prev_record, curr_event)
+                if recovered is not None:
+                    return recovered, True
+                # Genuine partial trip (turned around far from the far terminal).
                 log.info(
                     "Cycle aborted: returned to %s without reaching %s",
                     self._start_terminal, opposite,
