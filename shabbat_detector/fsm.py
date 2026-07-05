@@ -609,15 +609,21 @@ class ElevatorFSM:
                     ),
                     last_cycle_summary=summary,
                 )
+            # A non-matching completed cycle drives ONLY the structural
+            # (consecutive-nonmatch) trigger - it must not also add a window
+            # Violation.  detector.py already records discrete mid-cycle
+            # violations, so counting one bad trip as two window violations was
+            # reaching VIOLATIONS_FOR_EXIT on a single cycle (#10).
             self._consecutive_nonmatch += 1
-            v = Violation(ts=now, floor="cycle", reason=self._mismatch_reason(eval_result))
-            self._add_violation(v, now)
             return self._maybe_exit(now, hebcal_in_window, summary)
 
         if self.state == DetectorState.CANDIDATE_EXIT:
             if matches:
-                # Clean cycle — return to SHABBAT
+                # Clean cycle - return to SHABBAT.  Renew the stickiness anchor
+                # so a rescued cycle gets a fresh protected window instead of
+                # inheriting the original (possibly long-expired) entry time (#11).
                 self._last_clean_cycle_ts = now
+                self._shabbat_entered_at = now
                 self._consecutive_nonmatch = 0
                 self._violations.clear()
                 self._candidate_exit_started = None
@@ -627,9 +633,8 @@ class ElevatorFSM:
                     reason_he="מחזור תקין — חזרה למצב שבת",
                     last_cycle_summary=summary,
                 ))
+            # Structural trigger only, no double-counted window Violation (#10).
             self._consecutive_nonmatch += 1
-            v = Violation(ts=now, floor="cycle", reason=self._mismatch_reason(eval_result))
-            self._add_violation(v, now)
             return self._maybe_exit(now, hebcal_in_window, summary)
 
         return FSMResult(
@@ -685,13 +690,26 @@ class ElevatorFSM:
         window_trigger = len(recent) >= threshold
         nonmatch_trigger = nonmatch_needed > 0 and nonmatch_n >= nonmatch_needed
 
-        if window_trigger or nonmatch_trigger:
+        # Enforce the inter-transition cooldown that was previously dead code
+        # (#8): a *triggered* exit may not fire within COOLDOWN_S of the last
+        # state change.  The CANDIDATE_EXIT timeout below stays the guaranteed
+        # escape, and a clean cycle (handled before _maybe_exit is reached)
+        # always rescues to SHABBAT, so this suppresses only rapid oscillation.
+        cooling = now < self._cooldown_until
+        if (window_trigger or nonmatch_trigger) and not cooling:
             if window_trigger:
                 why = f"{len(recent)} חריגות תוך {window_min} דקות"
             else:
                 why = f"{nonmatch_n} מחזורים חריגים ברצף"
             if self.state == DetectorState.SHABBAT:
                 self._candidate_exit_started = now
+                # Grace: require FRESH evidence gathered *inside* CANDIDATE_EXIT
+                # to confirm the exit (#9).  Without clearing, the violations
+                # that triggered the candidate stayed "recent", so a single
+                # extra event confirmed NORMAL seconds later (the 21s elevator-D
+                # incident, 2026-07-04 20:38:46 -> 20:39:07).
+                self._violations.clear()
+                self._consecutive_nonmatch = 0
                 return self._transition_to(DetectorState.CANDIDATE_EXIT, now, FSMResult(
                     new_state=DetectorState.CANDIDATE_EXIT,
                     shabbat_active=None,
