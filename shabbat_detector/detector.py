@@ -88,6 +88,11 @@ def _all_valid_stops(config: dict) -> set[str]:
     return up | dn | terminals
 
 
+# A floor "change" that reverses to the floor two events back faster than this
+# is RFID reader flap between two adjacent panels at rest, not real travel (#16).
+_FLAP_WINDOW_S = 3.0
+
+
 def _apply_override(shabbat_active: Optional[bool], override: str) -> Optional[bool]:
     """Apply manual SHABBAT_OVERRIDE on top of an FSM-decided shabbat_active.
 
@@ -133,12 +138,24 @@ def _apply_result(
             for v in fsm._violations[-10:]
         ]
 
-    # Apply manual override on top of FSM decision
-    effective_shabbat_active = _apply_override(result.shabbat_active, override)
-    changed = result.new_state != prev_state or effective_shabbat_active is not None
+    # Under a manual override the displayed SHABBAT_ACTIVE is pinned by the
+    # override (set once in on_config_update).  The FSM keeps running underneath,
+    # but it must NOT rewrite SHABBAT_ACTIVE or spam SHABBAT_DETECTOR churn on
+    # every internal transition - that leaked the masked flapping into the
+    # notifier and looped the config SSE stream (#22).  Log the underlying
+    # transition on-device for diagnostics, then stop.
+    if override in ("force_on", "force_off"):
+        if result.new_state != prev_state:
+            log.info(
+                "SHABBAT TRANSITION %s -> %s (masked by override=%s) | סיבה: %s",
+                prev_state.value, result.new_state.value, override, result.reason_he,
+            )
+        return
 
-    if effective_shabbat_active is not None:
-        updates["SHABBAT_ACTIVE"] = effective_shabbat_active
+    changed = result.new_state != prev_state or result.shabbat_active is not None
+
+    if result.shabbat_active is not None:
+        updates["SHABBAT_ACTIVE"] = result.shabbat_active
 
     if test_mode:
         log.info("[TEST] Would write: %s", json.dumps(updates, ensure_ascii=False))
@@ -146,15 +163,17 @@ def _apply_result(
 
     if changed:
         # Precise, self-contained cause line on disk: state change + the exact
-        # reason (which structural check entered/left Shabbat).  This replaces
-        # the old Firebase /logs audit trail (removed - it only ever 401'd and
-        # the user wants on-device logging only).
+        # reason (which structural check entered/left Shabbat).
         if result.new_state != prev_state:
             log.info(
                 "SHABBAT TRANSITION %s -> %s | סיבה: %s",
                 prev_state.value, result.new_state.value, result.reason_he,
             )
-        fb.patch_elevator_config(updates)
+        # A real SHABBAT_ACTIVE flip is the system's most important write - retry
+        # it so a WiFi blip at that instant does not leave the kiosk stale (#19).
+        fb.patch_elevator_config(
+            updates, retries=2 if result.shabbat_active is not None else 0
+        )
     elif result.last_cycle_summary:
         # Always update last_cycle_summary so admin sees it
         fb.patch_elevator_config({
@@ -368,8 +387,11 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
             except Exception as e:
                 log.warning("Could not propagate settings to FSM: %s", e)
 
-    # Lock must exist BEFORE we subscribe (subscriber may fire immediately)
-    _fsm_lock = threading.Lock()
+    # Lock must exist BEFORE we subscribe (subscriber may fire immediately).
+    # RLock (re-entrant) so the SIGTERM handler can save state even if it fires
+    # while the main thread already holds the lock, instead of self-deadlocking
+    # and being SIGKILLed with the final save lost (#24).
+    _fsm_lock = threading.RLock()
 
     fb.subscribe_config(on_config_update)
     fb.subscribe_settings(on_settings_update)
@@ -379,6 +401,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
     # (already created above).
     _shared = {
         "prev_event": None,                      # type: Optional[FloorEvent]
+        "prev_prev_event": None,                 # two-back accepted floor (flap check, #16)
         "last_event_received_ts": time.time(),   # any Firebase event (incl. dups)
         "last_missed_fire_ts": 0.0,              # throttle for cadence watchdog
     }
@@ -540,7 +563,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
         floor_raw = raw.get("floor")
         ts_raw = raw.get("timestamp")
 
-        if not floor_raw or ts_raw is None:
+        if floor_raw is None or floor_raw == "" or ts_raw is None:   # keep floor 0 (#17)
             continue
 
         floor = str(floor_raw)
@@ -564,6 +587,20 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
             continue
 
         now = float(ts_raw)
+        # #16: reader-flap suppression - a "change" that immediately reverses to
+        # the floor two events back within _FLAP_WINDOW_S is tag oscillation
+        # between two adjacent panels at rest, not travel.  Monotonic express
+        # reads never match the 2-back floor, and a real turnaround dwells far
+        # longer than _FLAP_WINDOW_S, so both are unaffected.
+        prev_prev = _shared.get("prev_prev_event")
+        if (
+            prev_event is not None and prev_prev is not None
+            and floor == prev_prev.floor
+            and now - prev_event.timestamp < _FLAP_WINDOW_S
+        ):
+            log.debug("Skipping reader flap: %r reversed within %.1fs",
+                      floor, now - prev_event.timestamp)
+            continue
         event = FloorEvent(floor=floor, timestamp=now)
 
         # Determine Hebcal window status
@@ -630,6 +667,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                     learner.reset()
                     log.info("AutoLearner: reset (exited SHABBAT)")
 
+            _shared["prev_prev_event"] = prev_event
             _shared["prev_event"] = event
 
             # Persist state (rate-limited internally)

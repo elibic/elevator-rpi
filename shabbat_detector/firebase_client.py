@@ -144,17 +144,27 @@ class FirebaseClient:
 
     # ── Writes ────────────────────────────────────────────────────────────────
 
-    def patch_elevator_config(self, updates: dict) -> bool:
-        """PATCH /elevator_configs/{id} with the given fields."""
+    def patch_elevator_config(self, updates: dict, retries: int = 0) -> bool:
+        """PATCH /elevator_configs/{id} with the given fields.  `retries` extra
+        attempts (short backoff) let the critical SHABBAT_ACTIVE write survive a
+        brief network blip instead of being silently dropped and never re-tried
+        (#19)."""
         url = f"{self._base}/elevator_configs/{self._elevator_id}.json"
-        payload = {**updates, "secret_key": self._key}
-        try:
-            r = requests.patch(url, data=json.dumps(payload), timeout=10)
-            r.raise_for_status()
-            return True
-        except Exception as e:
-            log.error("Failed to patch elevator config: %s", e)
-            return False
+        body = json.dumps({**updates, "secret_key": self._key})
+        for attempt in range(retries + 1):
+            try:
+                r = requests.patch(url, data=body, timeout=10)
+                r.raise_for_status()
+                return True
+            except Exception as e:
+                if attempt < retries:
+                    log.warning("patch_elevator_config failed (attempt %d/%d): %s - retrying",
+                                attempt + 1, retries + 1, e)
+                    time.sleep(1.0 + attempt)
+                    continue
+                log.error("Failed to patch elevator config: %s", e)
+                return False
+        return False
 
     def append_detector_log(self, entry: dict) -> bool:
         """POST (push) to /logs/shabbat_detector/{id}."""
