@@ -194,7 +194,10 @@
 - כל Pi דוחף את תיקיית `logs/` שלו לתת-תיקייה **`{project}/{ELEVATOR_ID}/`** בריפו לוגים **נפרד**
   (למשל `elibic/elevator-logs`). ה-`project` נגזר מ-host של `FIREBASE_URL` (תווית ראשונה בלי
   `-default-rtdb`/`-elev`; `LOG_BACKUP_PREFIX` דורס) - כך אותה מעלית (`B`) בכמה פרויקטים (ramada+nitza)
-  לא מתנגשת, ואין קונפליקטים בין Pi-ים (`pull --rebase` + retry על מרוץ-ref). הדשבורד גוזר את אותו
+  לא מתנגשת, ואין קונפליקטים בין Pi-ים. הקלון המקומי הוא בר-החלפה: לפני כל `push` הוא מסונכרן
+  בכוח ל-`origin/<branch>` (`fetch`+`reset --hard`, מנקה drift/rebase-תקוע/עץ-מלוכלך) והסנאפשוט
+  מועתק מחדש, עם כמה ניסיונות על מרוץ-ref - כך Pi שהקלון שלו פיגר או נתקע מרפא את עצמו במקום להיכשל
+  ב-non-fast-forward. הדשבורד גוזר את אותו
   slug מ-`databaseURL` של הפרויקט, כך שקישור "לוגים" בכרטיס מצביע בדיוק לאותה תיקייה.
 - רץ גם **שבועית אוטומטית** (`LOG_BACKUP_ENABLED` + `LOG_BACKUP_INTERVAL_DAYS`), עם `last_backup`
   ב-`state_fleet_{id}.json`. מדווח `backup_status` (`backing_up`/`ok`/`failed: …`) ל-`/fleet/{id}`.
