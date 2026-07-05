@@ -119,7 +119,12 @@ class ElevatorFSM:
         # config-implied period (see expected_cycle_period_from_config, which
         # models per-direction stop floors and per-floor dwells).  Catches
         # grossly long (wandering) or short (partial) cycles.  0 disables.
-        "CYCLE_DURATION_TOLERANCE_PCT":  40,
+        # Default 0: the duration entry-gate is OFF fleet-wide, so a project
+        # whose config lacks per-direction stop lists (where the period estimate
+        # falls back to the crude 2*span*TPF heuristic) can't be wrongly rejected.
+        # The now-accurate period still anchors the cadence-based exit
+        # (MISSED_CYCLE_FACTOR); set this >0 per-project to re-enable the gate.
+        "CYCLE_DURATION_TOLERANCE_PCT":  0,
 
         # ── Exit tunables ──────────────────────────────────────────
         # Minimum time the FSM must remain in SHABBAT before any exit logic runs.
