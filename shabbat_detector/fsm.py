@@ -118,7 +118,7 @@ class ElevatorFSM:
         # Allowed +/- deviation of the whole cycle's duration from the duration
         # implied by the config (2 * floor-span * TIME_PER_FLOOR).  Catches
         # grossly long (wandering) or short (partial) cycles.  0 disables.
-        "CYCLE_DURATION_TOLERANCE_PCT":  40,
+        "CYCLE_DURATION_TOLERANCE_PCT":  0,
 
         # ── Exit tunables ──────────────────────────────────────────
         # Minimum time the FSM must remain in SHABBAT before any exit logic runs.
