@@ -388,14 +388,18 @@ class Installer:
         return StepResult("fleet_agent", True)
 
     def _set_pcmanfm_quick_exec(self) -> None:
-        """מבטל את חלונית "Execute File" של מנהל-הקבצים (PCManFM) — כך שלחיצה על
-        הקיצור פותחת ישירות. כותב quick_exec=1 לפרופילי pcmanfm של המשתמש."""
+        """מבטל את חלונית "Execute File" של מנהל-הקבצים (PCManFM) - כך שלחיצה על
+        הקיצור פותחת ישירות. כותב quick_exec=1 ל**כל** פרופילי pcmanfm של המשתמש -
+        הקיימים וגם ברירות-המחדל (LXDE-pi ב-X11/LXDE, default בגרסאות אחרות) - כדי
+        שההגדרה תחול בכל גרסת OS אחרי login/ריבוט, ולא רק על הפרופיל שכבר קיים.
+        (ההגדרה נכנסת לתוקף כשמנהל-הקבצים טוען מחדש את הקונפיג, כלומר בהתחברות הבאה.)"""
         import glob
         import configparser
         base = os.path.join(self.env.home, ".config", "pcmanfm")
-        confs = glob.glob(os.path.join(base, "*", "pcmanfm.conf")) \
-            or [os.path.join(base, "LXDE-pi", "pcmanfm.conf")]   # ברירת המחדל ב-RPi OS
-        for conf in confs:
+        confs = set(glob.glob(os.path.join(base, "*", "pcmanfm.conf")))
+        confs.add(os.path.join(base, "LXDE-pi", "pcmanfm.conf"))   # ברירת המחדל ב-RPi OS (X11/LXDE)
+        confs.add(os.path.join(base, "default", "pcmanfm.conf"))   # פרופיל default (גרסאות אחרות)
+        for conf in sorted(confs):
             try:
                 if self.dry_run:
                     self.emit(f"DRY-RUN set quick_exec=1 in {conf}", "dry")
@@ -443,7 +447,40 @@ class Installer:
             self._run(["sudo", "-u", self.env.user, "gio", "set", desktop_file,
                        "metadata::trusted", "true"], check=False)
         self._set_pcmanfm_quick_exec()   # בלי חלונית "Execute File" בלחיצה
+        self.install_autostart()         # פתיחת הדשבורד אוטומטית בהתחברות/בוט
         return StepResult("desktop_shortcut", True, f"{len(wrote)} files")
+
+    def _autostart_enabled(self) -> bool:
+        """ברירת-מחדל: כן. אפשר לכבות עם settings.DASHBOARD_AUTOSTART=false."""
+        try:
+            val = self.load_config().get("settings", {}).get("DASHBOARD_AUTOSTART", True)
+        except Exception:
+            return True
+        return str(val).strip().lower() not in ("0", "false", "no", "off", "")
+
+    def install_autostart(self) -> None:
+        """מתקין רשומת autostart (XDG) שפותחת את הדשבורד אוטומטית בהתחברות.
+
+        Raspberry Pi OS מריץ רשומות ``~/.config/autostart/*.desktop`` גם ב-LXDE
+        (Bullseye) וגם ב-labwc/wayfire (Bookworm), אז זו הדרך הניידת בין הגרסאות.
+        רשומת autostart רצה ישירות דרך מנגנון-הסשן ולא עוברת דרך חלונית
+        "Execute File" של מנהל-הקבצים. כיבוי: settings.DASHBOARD_AUTOSTART=false."""
+        target = os.path.join(self.env.home, ".config", "autostart",
+                              "elevator-dashboard.desktop")
+        if not self._autostart_enabled():
+            # כיבוי מפורש: הסר רשומה קיימת כדי שהשינוי ייכנס לתוקף בעדכון.
+            if not self.dry_run and os.path.exists(target):
+                try:
+                    os.remove(target)
+                    self.emit("autostart של הדשבורד כובה (DASHBOARD_AUTOSTART=false)", "info")
+                except OSError as e:
+                    self.emit(f"אזהרה: הסרת autostart נכשלה: {e}", "warn")
+            return
+        content = self._render_template("elevator-dashboard-autostart.desktop.in",
+                                        self._tmpl_mapping())
+        self._write_file(target, content, mode=0o644, owner=self.env.user)
+        self._chown(os.path.dirname(target), self.env.user)
+        self.emit("הדשבורד יעלה אוטומטית בהתחברות (autostart)", "ok")
 
     # ── 9. ניהול שירותים ──────────────────────────────────────────────────────
     def _systemctl(self, action: str, service: str) -> bool:

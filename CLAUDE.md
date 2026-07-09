@@ -17,7 +17,7 @@
 - **Pi חדש:** `git clone` → `sudo ./setup.sh` (אשף טרמינל) או `sudo ./setup.sh --web` (גרפי).
   מתקין הכל: דרייברים, venv, **שלושה שירותים** (`rfid-tracker` + `shabbat-detector` +
   `fleet-agent`), כלי-web מקומי (`elevator-config-web` על `127.0.0.1:8080`), קיצור
-  שולחן-עבודה, Pi Connect.
+  שולחן-עבודה + **הפעלה-אוטומטית של הדשבורד בבוט** (XDG-autostart), Pi Connect.
 - **Pi קיים - עדכון בטוח (לא נוגע בקונפיג):**
   ```bash
   cd ~/elevator-RFID            # או ~/elevator-rpi
@@ -90,6 +90,17 @@
   ביום - כך נוצר הקובץ שחצה 100MB). כל תג נרשם לכל היותר פעם ב-`TAG_LOG_COOLDOWN_S` (ברירת-מחדל
   60ש'); הדיכוי מסוכם בשורה תקופתית. תג חדש/מעבר-קומה אמיתי נרשם מיידית; שליחת הקומות לענן
   לא מושפעת כלל.
+
+## דשבורד מקומי - פתיחה אוטומטית ובלי חלונית-הרצה (עודכן יולי 2026, גרסה 1.0.12)
+- **הדשבורד עולה אוטומטית בבוט:** המתקין כותב רשומת `~/.config/autostart/elevator-dashboard.desktop`
+  (XDG) שמריצה את `installer/open-dashboard.sh`. RPi OS מכבד XDG-autostart גם ב-LXDE (Bullseye)
+  וגם ב-labwc/wayfire (Bookworm), אז זה נייד. `open-dashboard.sh` ממתין (חסום, עד ~30ש') שהפורט
+  `127.0.0.1:8080` יענה לפני פתיחת Chromium, כדי שב-boot הדפדפן לא ייפתח על "connection refused".
+  כיבוי: `settings.DASHBOARD_AUTOSTART=false` (המתקין גם מסיר רשומה קיימת).
+- **חלונית "Execute File" של PCManFM לא קופצת יותר:** `_set_pcmanfm_quick_exec` כותב `quick_exec=1`
+  ל**כל** פרופילי pcmanfm (הקיימים + `LXDE-pi` + `default`), כך שההגדרה חלה בכל גרסת OS. שים לב:
+  זה נכנס לתוקף כשמנהל-הקבצים טוען מחדש קונפיג - כלומר **בהתחברות/ריבוט הבא**, לא בזמן ה-`setup.sh`
+  עצמו (ולכן בעדכון תוך-סשן החלונית עוד תופיע פעם אחת עד ריבוט). הקיצור גם מסומן `metadata::trusted`.
 
 ## התראות
 - **הוסרו מה-Pi.** ההתראות מנוהלות מרכזית מדשבורד האדמין (סקשן **"🔔 התראות"** לכל

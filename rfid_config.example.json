@@ -16,6 +16,9 @@
     "SECRET_KEY": "PUT-YOUR-SECRET-KEY-HERE",
     "TIME_PER_FLOOR": 30,
 
+    "_dashboard_comment": "DASHBOARD_AUTOSTART (ברירת-מחדל true): פתיחת הדשבורד המקומי אוטומטית בבוט דרך רשומת XDG-autostart. false = לא לפתוח אוטומטית (וגם מסיר רשומה קיימת בעדכון).",
+    "DASHBOARD_AUTOSTART": true,
+
     "_fleet_comment": "ניהול-צי/עדכון-מרחוק (fleet_agent.py) — כל המפתחות אופציונליים, ברירות-מחדל בקוד. ראו docs/fleet-remote-update.md.",
     "FLEET_ENABLED": true,
     "FLEET_REPORT_INTERVAL": 300,
