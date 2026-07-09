@@ -88,6 +88,7 @@ log = logging.getLogger("fleet_agent")
 _DEFAULT_REPORT_INTERVAL = 300.0    # heartbeat cadence (< dashboard's 660s stale)
 _DEFAULT_POLL_INTERVAL = 15.0       # how often we look for a new command
 _UPDATE_TIMEOUT_S = 1800            # hard cap on a single setup.sh run
+_BOOT_RESCUE_GRACE_S = 120.0        # wait this long after agent start before boot-rescue
 
 
 # ── Version detection ─────────────────────────────────────────────────────────
@@ -168,6 +169,30 @@ def _collect_services() -> dict:
     return {svc: _service_status(svc) for svc in _FLEET_SERVICES}
 
 
+def _never_started_since_boot(svc: str) -> bool:
+    """True when an *enabled* unit never even began activating since this boot.
+
+    That is the exact fingerprint of a start-job that systemd dropped during
+    boot (e.g. deleted to break an ordering cycle, as happened when
+    fix_cp210x.service declared After=multi-user.target): the unit is enabled,
+    dead, and has zero journal entries. InactiveExitTimestampMonotonic stays 0
+    only if the unit never left the inactive state this boot - so a service an
+    operator stopped on purpose (it *was* active earlier) is never matched.
+    """
+    try:
+        out = subprocess.run(
+            ["systemctl", "show", f"{svc}.service", "-p", "UnitFileState",
+             "-p", "ActiveState", "-p", "InactiveExitTimestampMonotonic"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+        props = dict(line.split("=", 1) for line in out.strip().splitlines() if "=" in line)
+        return (props.get("UnitFileState") == "enabled"
+                and props.get("ActiveState") in ("inactive", "failed")
+                and props.get("InactiveExitTimestampMonotonic", "0") in ("", "0"))
+    except Exception:
+        return False
+
+
 # ── Minimal /fleet REST client ────────────────────────────────────────────────
 class FleetClient:
     """Tiny REST wrapper for ``/fleet/{id}`` — mirrors ``firebase_client`` style.
@@ -238,6 +263,11 @@ class FleetAgent:
         self._backup_enabled = _truthy(settings.get("LOG_BACKUP_ENABLED"), False)
         self._backup_interval = float(settings.get("LOG_BACKUP_INTERVAL_DAYS", 7)) * 86400.0
         self._logs_dir = os.path.join(self._repo, "logs")
+        # Boot-rescue (FLEET_BOOT_RESCUE, default on): one-shot safety net that
+        # starts sibling services whose boot start-job silently vanished.
+        self._boot_rescue_enabled = _truthy(settings.get("FLEET_BOOT_RESCUE"), True)
+        self._boot_rescue_done = False
+        self._agent_started_mono = time.monotonic()
 
     # ── state ────────────────────────────────────────────────────────────────
     def _persist(self) -> None:
@@ -280,11 +310,45 @@ class FleetAgent:
                 self._maybe_scheduled_backup()
             except Exception as e:
                 log.warning("scheduled backup check failed: %s", e)
+            try:
+                self._maybe_boot_rescue()
+            except Exception as e:
+                log.warning("boot rescue check failed: %s", e)
             now = time.monotonic()
             if now - last_report >= self._report_interval:
                 self._report("online")
                 last_report = now
             time.sleep(self._poll_interval)
+
+    def _maybe_boot_rescue(self) -> None:
+        """One-shot per agent run: start enabled services that never came up this boot.
+
+        Guarantees the user-facing promise "the services are up after a reboot"
+        even if systemd silently dropped a start-job (seen in the field when an
+        ordering cycle made it delete rfid-tracker's job - enabled, dead, zero
+        journal lines). Runs once, after a grace period that lets a normal boot
+        finish on its own; the InactiveExitTimestampMonotonic==0 guard (see
+        _never_started_since_boot) makes sure a deliberate operator stop or the
+        tag-scan flow (which stops the tracker briefly) is never overridden.
+        Uses --no-block so a wedged dependency cannot hang the agent loop, and
+        reports what it did to /fleet/{id} so the dashboard shows it.
+        """
+        if (self._boot_rescue_done or not self._boot_rescue_enabled
+                or shutil.which("systemctl") is None):
+            return
+        if time.monotonic() - self._agent_started_mono < _BOOT_RESCUE_GRACE_S:
+            return
+        self._boot_rescue_done = True
+        stuck = [svc for svc in _FLEET_SERVICES
+                 if svc != "fleet-agent" and _never_started_since_boot(svc)]
+        if not stuck:
+            return
+        for svc in stuck:
+            log.warning("Boot rescue: %s is enabled but never started this boot - "
+                        "starting it now", svc)
+            subprocess.run(["systemctl", "start", "--no-block", f"{svc}.service"],
+                           capture_output=True, timeout=10, check=False)
+        self._report("online", boot_rescue={"services": stuck, "ts": int(time.time())})
 
     def _maybe_scheduled_backup(self) -> None:
         """Weekly automatic log backup (gated by LOG_BACKUP_ENABLED + interval)."""

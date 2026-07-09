@@ -20,6 +20,14 @@ Config (``rfid_config.json -> settings``, all optional):
   ``LOG_BACKUP_DIR``        local working clone (default ``/var/lib/elevator-logs``)
   ``LOG_BACKUP_GIT_NAME``   commit author name  (default ``elevator-pi``)
   ``LOG_BACKUP_GIT_EMAIL``  commit author email (default ``elevator-pi@econtrol.co.il``)
+  ``LOG_BACKUP_MAX_FILE_MB``  per-file size cap (default 90). GitHub hard-rejects
+                            files over 100MB (the "gh.io/lfs" push error) - one log
+                            that ballooned past the limit used to fail the *whole*
+                            backup, forever. Files over the cap are gzip-compressed
+                            to ``<name>.gz`` (deterministic - an unchanged log does
+                            not produce a new commit); if even the .gz is over the
+                            cap, the file is skipped with a ``<name>.TOO_LARGE.txt``
+                            note instead of breaking the push.
 
 Security: the repo may be public (no secrets in the logs, by decision), but we
 still scrub the ``SECRET_KEY`` value defensively before pushing, and never log
@@ -27,6 +35,7 @@ still scrub the ``SECRET_KEY`` value defensively before pushing, and never log
 """
 from __future__ import annotations
 
+import gzip
 import logging
 import os
 import re
@@ -40,6 +49,7 @@ log = logging.getLogger("fleet_agent.log_backup")
 
 _DEFAULT_DIR = "/var/lib/elevator-logs"
 _DEFAULT_BRANCH = "main"
+_DEFAULT_MAX_FILE_MB = 90.0                              # GitHub rejects >100MB; keep a margin
 _GIT_TIMEOUT = 120
 _PUSH_ATTEMPTS = 4                                       # converge+push tries before giving up
 _BACKOFF_BASE = 1.5                                      # seconds; grows per attempt to de-sync racing Pis
@@ -95,25 +105,67 @@ def _run(args: list[str], cwd: str | None = None) -> tuple[int, str]:
         return 1, str(e)
 
 
-def _copy_scrubbed(logs_dir: str, dest: str, secret: str) -> int:
+def _scrub_stream(src: str, out, secret: str) -> None:
+    """Stream ``src`` line-by-line into the binary file-object ``out``, scrubbing
+    secrets on the way. Streaming (instead of one big read) keeps memory flat -
+    a log that ballooned to >100MB must not OOM a Pi Zero (512MB RAM)."""
+    with open(src, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            out.write(_scrub_text(line, secret).encode("utf-8"))
+
+
+def _copy_scrubbed(logs_dir: str, dest: str, secret: str,
+                   max_bytes: int) -> tuple[int, list[str]]:
     """Copy every regular file from ``logs_dir`` into ``dest`` (created if
-    needed), scrubbing secrets on the way. Returns the number of files copied.
-    Re-run each attempt because a hard-sync may have wiped a prior snapshot."""
+    needed), scrubbing secrets on the way. Files larger than ``max_bytes`` are
+    gzip-compressed to ``<name>.gz`` (GitHub hard-rejects >100MB files, and one
+    such file used to fail the whole backup); if even the .gz is too large the
+    file is skipped and a ``<name>.TOO_LARGE.txt`` note is left instead. The
+    gzip stream is deterministic (mtime=0), so re-running on unchanged logs
+    yields identical bytes and therefore "no changes" instead of a new commit.
+    Returns ``(files_backed_up, oversize_notes)``. Re-run each attempt because
+    a hard-sync may have wiped a prior snapshot."""
     os.makedirs(dest, exist_ok=True)
-    copied = 0
+    copied, oversized = 0, []
     for fname in sorted(os.listdir(logs_dir)):
         src = os.path.join(logs_dir, fname)
         if not os.path.isfile(src):
             continue
+        plain = os.path.join(dest, fname)
+        gz = plain + ".gz"
+        note = plain + ".TOO_LARGE.txt"
         try:
-            with open(src, "r", encoding="utf-8", errors="replace") as f:
-                text = f.read()
-            with open(os.path.join(dest, fname), "w", encoding="utf-8") as f:
-                f.write(_scrub_text(text, secret))
+            big = os.path.getsize(src) > max_bytes
+            # remove the counterpart variants so a file that crossed the size
+            # threshold (either way) does not leave a stale duplicate in the repo
+            for stale in ((plain,) if big else (gz, note)):
+                if os.path.exists(stale):
+                    os.remove(stale)
+            if not big:
+                with open(plain, "wb") as out:
+                    _scrub_stream(src, out, secret)
+                copied += 1
+                continue
+            with open(gz, "wb") as raw:
+                with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as out:
+                    _scrub_stream(src, out, secret)
+            if os.path.getsize(gz) > max_bytes:          # incompressible - skip, don't break the push
+                os.remove(gz)
+                with open(note, "w", encoding="utf-8") as f:
+                    f.write(f"{fname}: {os.path.getsize(src)} bytes exceeds the backup "
+                            f"per-file cap even gzip-compressed - not backed up.\n")
+                oversized.append(f"{fname} skipped (too large)")
+                log.warning("log file %s too large even compressed - skipped", fname)
+                continue
+            if os.path.exists(note):
+                os.remove(note)
             copied += 1
+            oversized.append(f"{fname} gzipped")
+            log.info("log file %s over per-file cap - backed up compressed as %s.gz",
+                     fname, fname)
         except Exception as e:
             log.warning("skip log file %s: %s", fname, e)
-    return copied
+    return copied, oversized
 
 
 def _sync_to_origin(work: str, branch: str) -> None:
@@ -157,6 +209,11 @@ def backup_logs(settings: dict, elevator_id: str, logs_dir: str) -> tuple[bool, 
     name = str(settings.get("LOG_BACKUP_GIT_NAME", "") or "elevator-pi")
     email = str(settings.get("LOG_BACKUP_GIT_EMAIL", "") or "elevator-pi@econtrol.co.il")
     secret = str(settings.get("SECRET_KEY", ""))
+    try:
+        max_mb = float(settings.get("LOG_BACKUP_MAX_FILE_MB", _DEFAULT_MAX_FILE_MB))
+    except (TypeError, ValueError):
+        max_mb = _DEFAULT_MAX_FILE_MB
+    max_bytes = int(max_mb * 1024 * 1024)
 
     if shutil.which("git") is None:
         return False, "git not installed"
@@ -193,8 +250,8 @@ def backup_logs(settings: dict, elevator_id: str, logs_dir: str) -> tuple[bool, 
     for attempt in range(_PUSH_ATTEMPTS):
         _sync_to_origin(work, branch)                       # converge onto origin/<branch> (or prep first commit)
 
-        copied = _copy_scrubbed(logs_dir, dest, secret)
-        if copied == 0:
+        copied, oversized = _copy_scrubbed(logs_dir, dest, secret, max_bytes)
+        if copied == 0 and not oversized:
             return True, "no log files to back up"
 
         _run(["git", "-C", work, "add", rel])
@@ -211,7 +268,10 @@ def backup_logs(settings: dict, elevator_id: str, logs_dir: str) -> tuple[bool, 
 
         rc, out = _run(["git", "-C", work, "push", "origin", f"HEAD:{branch}"])
         if rc == 0:
-            return True, f"pushed {copied} file(s) to {rel}"
+            detail = f"pushed {copied} file(s) to {rel}"
+            if oversized:
+                detail += f" [{'; '.join(oversized)}]"
+            return True, detail
         last = out                                          # lost the ref race - resync & retry
         if attempt < _PUSH_ATTEMPTS - 1:
             time.sleep(_BACKOFF_BASE * (attempt + 1))

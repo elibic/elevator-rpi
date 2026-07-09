@@ -1,6 +1,11 @@
 [Unit]
 Description=Fix cp210x RFID USB ID (bind 1560:0003 to the in-kernel driver)
-After=multi-user.target
+# אזהרה: אסור להוסיף כאן After=multi-user.target! ביחד עם WantedBy=multi-user.target
+# (שמשמעו סדר-הפוך מובנה: היחידה רצה *לפני* שהיעד מוכרז) נוצר מעגל-סדר דרך
+# rfid-tracker (multi-user -> rfid-tracker -> fix_cp210x -> multi-user), ו-systemd
+# שובר מעגל כזה במחיקת job שרירותי מהמעגל בזמן האתחול - בפועל ה-tracker (או
+# היחידה הזו) פשוט לא הופעלו אחרי ריבוט, בלי שום שגיאה ביומן של השירות עצמו.
+# היחידה רצה מוקדם ממילא, וה-tracker מסתדר אחריה עם After=fix_cp210x.service.
 
 [Service]
 Type=oneshot

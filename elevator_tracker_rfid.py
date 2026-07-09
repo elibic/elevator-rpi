@@ -157,7 +157,7 @@ def main():
         CLOUD_LOGS_URL = f"{clean_base_url}_logs/{ELEVATOR_ID}.json"
 
     # לוג startup מקומי בלבד — tracker שקורס בלולאה לא יציף את /logs בענן בכל restart
-    log_message(f"--- Smart Elevator Tracker C (Secured) --- ID: {ELEVATOR_ID}", send_to_cloud=False)
+    log_message(f"--- Smart Elevator Tracker (Secured) --- ID: {ELEVATOR_ID}", send_to_cloud=False)
     log_message(f"Status URL: {STATUS_URL}", send_to_cloud=False)
     log_message(f"Logs URL: {CLOUD_LOGS_URL}", send_to_cloud=False)
     
@@ -181,6 +181,19 @@ def main():
     candidate_floor = None
     candidate_count = 0
 
+    # ── בלימת הצפת-לוג בריצוד תגים (anti log-flood) ────────────────────────────
+    # כשהקורא רואה שני תגים לסירוגין (תא שחונה בין שני מרקרים, או תגי-בדיקה ליד
+    # הקורא) כל התחלפות נכתבה ללוג - כמה שורות בשנייה, עשרות MB ביום. כך נוצר
+    # קובץ-לוג שבועי שחצה את מגבלת ה-100MB של GitHub ושבר את גיבוי-הלוגים כולו.
+    # לכן: שורת "Tag Change" לכל תג נרשמת לכל היותר פעם ב-TAG_LOG_COOLDOWN_S, ומה
+    # שדוכא נספר ומסוכם בשורה תקופתית אחת (עדות בלי הצפה). מעבר אמיתי בין קומות
+    # עדיין נרשם מיידית (תג חדש = אין cooldown), ושליחת הקומות לענן לא מושפעת -
+    # הסינון הוא על שורות הלוג בלבד.
+    TAG_LOG_COOLDOWN_S = float(SETTINGS.get('TAG_LOG_COOLDOWN_S', 60))
+    tag_log_last = {}          # tag -> time.monotonic() של הרישום האחרון שלו
+    suppressed_count = 0
+    suppressed_since = 0.0
+
     try:
         while True:
             ser.write(INVENTORY_CMD)
@@ -194,9 +207,26 @@ def main():
             # --- לוגיקת הלוגים ---
             if current_tag:
                 if current_tag != last_logged_tag:
-                    mapped_floor = TAG_MAP.get(current_tag, "Unknown")
-                    # כותב לוג מקומי על כל שינוי תג (לא שולח לענן כדי לחסוך תעבורה, אלא אם תרצה לשנות)
-                    log_message(f"Tag Change: ID '{current_tag}' -> Floor '{mapped_floor}'", send_to_cloud=False)
+                    now_mono = time.monotonic()
+                    last_log = tag_log_last.get(current_tag)
+                    if last_log is None or (now_mono - last_log) >= TAG_LOG_COOLDOWN_S:
+                        mapped_floor = TAG_MAP.get(current_tag, "Unknown")
+                        tag_log_last[current_tag] = now_mono
+                        if len(tag_log_last) > 256:      # הגנת-זיכרון מפני תגים אקראיים
+                            tag_log_last.clear()
+                            tag_log_last[current_tag] = now_mono
+                        # כותב לוג מקומי (לא לענן, לחיסכון בתעבורה)
+                        log_message(f"Tag Change: ID '{current_tag}' -> Floor '{mapped_floor}'", send_to_cloud=False)
+                    else:
+                        if suppressed_count == 0:
+                            suppressed_since = now_mono
+                        suppressed_count += 1
+                    # סיכום תקופתי של מה שדוכא - שומר עדות לריצוד בלי להציף את הקובץ
+                    if suppressed_count and (now_mono - suppressed_since) >= TAG_LOG_COOLDOWN_S:
+                        log_message(f"Tag flapping: suppressed {suppressed_count} repeated tag-change "
+                                    f"log lines in the last {int(now_mono - suppressed_since)}s",
+                                    send_to_cloud=False)
+                        suppressed_count = 0
                     last_logged_tag = current_tag
 
             current_floor = TAG_MAP.get(current_tag)
