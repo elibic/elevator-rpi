@@ -38,10 +38,13 @@
 
 ## מודל נתונים ב-Firebase (מ-`ramada-web/public/setup.html` - מקור-אמת)
 - **`elevator_configs/{id}`**: קונפיג + **`SHABBAT_OVERRIDE`** (`auto`/`force_on`/`force_off` -
-  מחרוזות, **לא** true/false) + `SHABBAT_DETECTOR{state,last_transition_reason}` +
+  מחרוזות, **לא** true/false) + **`SHABBAT_SOURCE`** (`auto`/`schedule`/`none`; חסר = ירושה
+  מברירת המחדל הפרויקטלית) + `SHABBAT_DETECTOR{state,last_transition_reason}` +
   `SHABBAT_ACTIVE` (פלט ה-Pi).
 - **`settings`** (גלובלי): `HEBCAL_GATE_ENABLED` (+windows), `SHABBAT_DETECTION{ספי FSM}`,
-  `YOM_TOV_SHENI`, `FLOOR_ALIASES`.
+  `YOM_TOV_SHENI`, `FLOOR_ALIASES`, **`SHABBAT_SOURCE_DEFAULT`** (`auto`/`schedule`/`none`),
+  **`SHABBAT_SCHEDULE_BEFORE_MINUTES`/`SHABBAT_SCHEDULE_AFTER_MINUTES`** (אופסטים מדויקים
+  למצב לוח-זמנים; נפרדים מחלונות השער הרחבים), `GEO_NAME_ID`.
 - **`elevators/{id}`**: קומה חיה (tracker). **`fleet/{id}`**: version/last_seen/command (עדכון מרחוק) +
   **`services`** (מצב 4 שירותי systemd, מוצג בדשבורד) + **`backup_status`** (גיבוי-לוגים).
 - `FIREBASE_URL` בקונפיג: detector+monitor מנרמלים ל-**root** של ה-DB (urlsplit), עם/בלי `.json`.
@@ -101,6 +104,28 @@
   ל**כל** פרופילי pcmanfm (הקיימים + `LXDE-pi` + `default`), כך שההגדרה חלה בכל גרסת OS. שים לב:
   זה נכנס לתוקף כשמנהל-הקבצים טוען מחדש קונפיג - כלומר **בהתחברות/ריבוט הבא**, לא בזמן ה-`setup.sh`
   עצמו (ולכן בעדכון תוך-סשן החלונית עוד תופיע פעם אחת עד ריבוט). הקיצור גם מסומן `metadata::trusted`.
+
+## מקור הפעלת מצב שבת - auto / schedule / none (עודכן יולי 2026, גרסה 1.1.0)
+- **מה זה:** בחירה פר-פרויקט (עם דריסה פר-מעלית) איך `SHABBAT_ACTIVE` נקבע:
+  `auto` = הזיהוי ההתנהגותי הקיים (ברירת מחדל, אפס שינוי בפרויקטים קיימים);
+  `schedule` = **מנוע לוח-זמנים** ב-`shabbat_detector/schedule_windows.py` שכותב
+  `SHABBAT_ACTIVE` לפי חלון hebcal מדויק: `[הדלקת נרות - BEFORE, הבדלה + AFTER]`
+  (ברירות מחדל 100/60 דק' - זהות ל-fallback הדפדפני); `none` = לעולם לא במצב שבת.
+  רזולוציה: `SHABBAT_SOURCE` של המעלית ← `settings/SHABBAT_SOURCE_DEFAULT` ← `auto`
+  (`resolve_source`). **`SHABBAT_OVERRIDE` תמיד גובר, בכל מצב.**
+- **מימוש:** טיק כל 30ש' מלולאת ה-watchdog (`_schedule_tick`); כתיבת flip עם retry
+  (כמו flip של ה-FSM) + `SHABBAT_DETECTOR{state:'SCHEDULE',ts,סיבה בעברית}`; ה-FSM ממשיך
+  לרוץ **מושתק** (אותו מנגנון של force_on/force_off ב-`_apply_result`) כך שחזרה ל-auto
+  מיידית; שינויי מקור/אופסטים/GEO_NAME_ID/YOM_TOV_SHENI נקלטים חיים דרך ה-SSE הקיים.
+- **עמידות (fail-closed):** רשימות החלונות (רב-חלוניות - תומך יו"ט מרובה-ימים ויו"ט שני
+  של גלויות לפי `YOM_TOV_SHENI`) נשמרות בקובץ ה-state בדיסק; כשל fetch לא מוחק אותן;
+  בלי דאטה שמיש בכלל - המצב האחרון מוחזק (בלי flapping) עם WARNING מדוכה. **re-assert
+  בעליית שירות** מיישר את ה-DB אחרי ריבוט/הפסקת חשמל שחצו גבול חלון (ב-auto אין כתיבה
+  בעלייה - כמו קודם). זה נפרד מ-`hebcal_gate.py` (השער הרחב, fail-open) שלא השתנה.
+- **תפעולי:** מצב `schedule` עדיין דורש Pi עם שירות `shabbat-detector` (הוא הכותב) -
+  אבל חומרת RFID אופציונלית לבניין כזה. כתיבה ידנית של `SHABBAT_ACTIVE` (למשל onoff.html)
+  מיושרת חזרה תוך טיק-שניים; שליטה ידנית עמידה = `SHABBAT_OVERRIDE`.
+- **בדיקות:** `python3 -m pytest tests/` (במחשב פיתוח; חדש בגרסה זו).
 
 ## התראות
 - **הוסרו מה-Pi.** ההתראות מנוהלות מרכזית מדשבורד האדמין (סקשן **"🔔 התראות"** לכל

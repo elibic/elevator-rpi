@@ -37,6 +37,12 @@ from .cycle_analyzer import Cycle, CycleAnalyzer, FloorEvent
 from .firebase_client import FirebaseClient
 from .fsm import DetectorState, ElevatorFSM, FSMResult, Violation, _TIME_SCALE
 from .hebcal_gate import HebcalGate
+from .schedule_windows import (
+    ScheduleWindows,
+    decide_write,
+    resolve_source,
+    schedule_offsets,
+)
 from .state_persistence import StatePersistence
 
 logging.basicConfig(
@@ -113,6 +119,7 @@ def _apply_result(
     prev_state: DetectorState,
     test_mode: bool,
     override: str = "auto",
+    source: str = "auto",
 ) -> None:
     if result is None:
         return
@@ -144,11 +151,14 @@ def _apply_result(
     # every internal transition - that leaked the masked flapping into the
     # notifier and looped the config SSE stream (#22).  Log the underlying
     # transition on-device for diagnostics, then stop.
-    if override in ("force_on", "force_off"):
+    # The exact same muting applies when SHABBAT_SOURCE is 'schedule' or 'none':
+    # there SHABBAT_ACTIVE is owned by the schedule engine (or pinned false),
+    # and the FSM only keeps recording so a switch back to 'auto' is instant.
+    if override in ("force_on", "force_off") or source in ("schedule", "none"):
         if result.new_state != prev_state:
             log.info(
-                "SHABBAT TRANSITION %s -> %s (masked by override=%s) | סיבה: %s",
-                prev_state.value, result.new_state.value, override, result.reason_he,
+                "SHABBAT TRANSITION %s -> %s (masked by override=%s, source=%s) | סיבה: %s",
+                prev_state.value, result.new_state.value, override, source, result.reason_he,
             )
         return
 
@@ -285,9 +295,10 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
              el_config.get("TOP_FLOOR"), el_config.get("BOTTOM_FLOOR"),
              el_config.get("TIME_PER_FLOOR"))
 
-    # ── Restore or create FSM + AutoLearner ──────────────────────────────────
+    # ── Restore or create FSM + AutoLearner + ScheduleWindows ────────────────
     fsm = ElevatorFSM(elevator_id)
     learner = AutoLearner()
+    schedule = ScheduleWindows()
     saved = persistence.load()
     if saved:
         if "fsm" in saved:
@@ -302,6 +313,8 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                 log.info("AutoLearner restored: %d cycle(s)", learner.cycle_count)
             except Exception as e:
                 log.warning("Could not restore AutoLearner: %s", e)
+        if "schedule" in saved:
+            schedule = ScheduleWindows.from_dict(saved["schedule"])
 
     # Seed FSM with current global settings (SHABBAT_DETECTION tunables etc.)
     fsm.update_settings(settings)
@@ -321,6 +334,164 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
     analyzer = _make_cycle_analyzer(el_config)
     stop_threshold = float(el_config.get("TIME_PER_FLOOR", 26)) * 0.5
 
+    # ── Schedule engine (SHABBAT_SOURCE = 'schedule' / 'none') ────────────────
+    # In 'schedule' mode the detector - not the FSM - owns SHABBAT_ACTIVE and
+    # flips it purely by the Hebcal window with the precise offsets from
+    # /settings.  In 'none' mode SHABBAT_ACTIVE is pinned false.  The FSM keeps
+    # running muted in both (see _apply_result), so a switch back to 'auto' is
+    # instant.  SHABBAT_OVERRIDE always wins over every source.
+    _SCHED_REWRITE_GRACE_S = 120.0
+    _SCHED_HOLD_WARN_INTERVAL_S = 1800.0
+    _sched = {
+        "last_written": None,      # last SHABBAT_ACTIVE value this engine wrote
+        "last_written_ts": 0.0,
+        "last_hold_warn_ts": 0.0,  # throttle for the "no window data" warning
+    }
+
+    def _merged_detector_block(state_str: str, reason: str, ts_ms: Optional[int]) -> dict:
+        """SHABBAT_DETECTOR patch that keeps last_cycle_summary etc. intact.
+        ts_ms=None keeps the previous last_transition_ts (no fake transition)."""
+        sd = dict(el_config.get("SHABBAT_DETECTOR") or {})
+        sd["state"] = state_str
+        sd["last_transition_reason"] = reason
+        if ts_ms is not None:
+            sd["last_transition_ts"] = ts_ms
+        return sd
+
+    def _source_base_active(source: str, now: Optional[float] = None) -> Optional[bool]:
+        """The SHABBAT_ACTIVE value a source implies with override='auto'."""
+        if now is None:
+            now = time.time()
+        if source == "schedule":
+            before_min, after_min = schedule_offsets(settings)
+            val = schedule.is_active(now, before_min, after_min)
+            if val is None:
+                # Unknown window - hold whatever is currently shown (fail-closed).
+                if _sched["last_written"] is not None:
+                    return _sched["last_written"]
+                return bool(el_config.get("SHABBAT_ACTIVE"))
+            return val
+        if source == "none":
+            return False
+        return fsm.state == DetectorState.SHABBAT
+
+    def _align_detector_state(state_str: str, reason: str) -> None:
+        """Cheap SHABBAT_DETECTOR.state alignment (no transition timestamp) so
+        the dashboard shows the mode - written only when it actually differs."""
+        sd = el_config.get("SHABBAT_DETECTOR") or {}
+        if sd.get("state") == state_str:
+            return
+        updates = {"SHABBAT_DETECTOR": _merged_detector_block(state_str, reason, None)}
+        if test_mode:
+            log.info("[TEST] Would write: %s", json.dumps(updates, ensure_ascii=False))
+            return
+        fb.patch_elevator_config(updates)
+
+    def _schedule_tick(now: Optional[float] = None) -> None:
+        """Always-on time tick: aligns SHABBAT_ACTIVE with the Hebcal window
+        when this elevator resolves to SHABBAT_SOURCE='schedule'."""
+        with _fsm_lock:
+            if now is None:
+                now = time.time()
+            if resolve_source(el_config, settings) != "schedule":
+                return
+            override = el_config.get("SHABBAT_OVERRIDE") or "auto"
+            if override in ("force_on", "force_off"):
+                return  # pinned; release is handled in on_config_update
+
+            try:
+                if schedule.refresh_if_due(settings, now):
+                    persistence.save(_full_state())  # keep fresh windows on disk
+            except Exception as e:
+                log.warning("Schedule windows refresh failed: %s", e)
+
+            before_min, after_min = schedule_offsets(settings)
+            desired = schedule.is_active(now, before_min, after_min)
+            if desired is None:
+                # Fail-closed: no usable window data - hold the last state.
+                if now - _sched["last_hold_warn_ts"] >= _SCHED_HOLD_WARN_INTERVAL_S:
+                    _sched["last_hold_warn_ts"] = now
+                    log.warning(
+                        "Schedule mode: no usable Hebcal window data - holding SHABBAT_ACTIVE=%s",
+                        el_config.get("SHABBAT_ACTIVE"),
+                    )
+                return
+
+            current = el_config.get("SHABBAT_ACTIVE")
+            if not decide_write(
+                desired, current, _sched["last_written"], _sched["last_written_ts"],
+                now, _SCHED_REWRITE_GRACE_S,
+            ):
+                if desired == bool(current):
+                    _sched["last_written"] = desired  # record agreement, no write
+                return
+
+            if desired:
+                reason = f"כניסה למצב שבת לפי לוח זמנים - {int(before_min)} דק' לפני הדלקת נרות"
+            else:
+                reason = f"יציאה ממצב שבת לפי לוח זמנים - {int(after_min)} דק' אחרי הבדלה"
+            updates = {
+                "SHABBAT_ACTIVE": desired,
+                "SHABBAT_DETECTOR": _merged_detector_block("SCHEDULE", reason, int(now * 1000)),
+            }
+            log.info("SCHEDULE TRANSITION: SHABBAT_ACTIVE := %s | סיבה: %s", desired, reason)
+            _sched["last_written"] = desired
+            _sched["last_written_ts"] = now
+            if test_mode:
+                log.info("[TEST] Would write: %s", json.dumps(updates, ensure_ascii=False))
+                return
+            # Same criticality as an FSM flip - retry so a WiFi blip does not
+            # leave the kiosks stale (#19).
+            fb.patch_elevator_config(updates, retries=2)
+            persistence.save(_full_state(), force=True)
+
+    def _handle_source_change(prev_source: str, new_source: str) -> None:
+        """React immediately when the resolved SHABBAT_SOURCE changes (config,
+        project default, or boot alignment)."""
+        with _fsm_lock:
+            now = time.time()
+            log.info("SHABBAT_SOURCE resolved %s -> %s", prev_source, new_source)
+            _sched["last_written"] = None
+            _sched["last_written_ts"] = 0.0
+            override = el_config.get("SHABBAT_OVERRIDE") or "auto"
+            if override in ("force_on", "force_off"):
+                return  # pinned; the mode takes effect when the override is released
+
+            if new_source == "schedule":
+                ts_before = _sched["last_written_ts"]
+                _schedule_tick(now)
+                if _sched["last_written_ts"] == ts_before:
+                    # Tick agreed with the DB (no write) - still surface the mode.
+                    _align_detector_state("SCHEDULE", "מקור הפעלה: לפי לוח זמנים")
+            elif new_source == "none":
+                reason = "מצב שבת מנוטרל בהגדרות (מקור: ללא)"
+                if bool(el_config.get("SHABBAT_ACTIVE")):
+                    updates = {
+                        "SHABBAT_ACTIVE": False,
+                        "SHABBAT_DETECTOR": _merged_detector_block("NONE", reason, int(now * 1000)),
+                    }
+                    if test_mode:
+                        log.info("[TEST] Would write: %s", json.dumps(updates, ensure_ascii=False))
+                    else:
+                        fb.patch_elevator_config(updates, retries=2)
+                else:
+                    _align_detector_state("NONE", reason)
+            else:  # back to 'auto'
+                effective = fsm.state == DetectorState.SHABBAT
+                prev_shown = bool(el_config.get("SHABBAT_ACTIVE"))
+                updates = {
+                    "SHABBAT_ACTIVE": effective,
+                    "SHABBAT_DETECTOR": _merged_detector_block(
+                        fsm.state.value,
+                        "מקור הפעלה הוחזר לזיהוי אוטומטי",
+                        int(now * 1000) if effective != prev_shown else None,
+                    ),
+                }
+                if test_mode:
+                    log.info("[TEST] Would write: %s", json.dumps(updates, ensure_ascii=False))
+                else:
+                    fb.patch_elevator_config(updates)
+
     # ── Config change listener (background thread) ────────────────────────────
     # Note: the lock is acquired below (defined right after the subscriptions),
     # so we use a forward-declared closure that resolves at call time.
@@ -333,6 +504,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
             # eval would mark every observed stop as illegal.
             log.info("Config updated remotely (keys=%s)", list((new_cfg or {}).keys()))
             prev_override = (el_config or {}).get("SHABBAT_OVERRIDE", "auto") or "auto"
+            prev_source = resolve_source(el_config, settings)
             # The detector PATCHes /elevator_configs/{id} (SHABBAT_DETECTOR state,
             # last_cycle_summary, auto-learn suggestions) and ALSO subscribes to
             # that same node, so every such write echoes back here. Resetting the
@@ -353,15 +525,27 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
             # If SHABBAT_OVERRIDE changed, immediately reflect it in SHABBAT_ACTIVE
             # so kiosks see the switch without waiting for the next elevator event.
             new_override = (merged.get("SHABBAT_OVERRIDE") or "auto")
+            new_source = resolve_source(el_config, settings)
             if new_override != prev_override:
-                # FSM decision is unaffected; we just rewrite what kiosks see.
-                fsm_says = (fsm.state == DetectorState.SHABBAT)
-                effective = _apply_override(fsm_says, new_override)
-                prev_effective = _apply_override(fsm_says, prev_override)
+                # The base value is SOURCE-aware: releasing a force while in
+                # 'schedule' mode must restore the window state, not the FSM's.
+                base = _source_base_active(new_source)
+                effective = _apply_override(base, new_override)
+                prev_effective = _apply_override(base, prev_override)
+                if new_source == "schedule":
+                    state_str = "SCHEDULE"
+                elif new_source == "none":
+                    state_str = "NONE"
+                else:
+                    state_str = fsm.state.value
                 log.info(
-                    "SHABBAT_OVERRIDE %s -> %s ; SHABBAT_ACTIVE := %s",
-                    prev_override, new_override, effective,
+                    "SHABBAT_OVERRIDE %s -> %s (source=%s) ; SHABBAT_ACTIVE := %s",
+                    prev_override, new_override, new_source, effective,
                 )
+                # Keep the schedule tick from immediately rewriting our value.
+                if new_source == "schedule":
+                    _sched["last_written"] = effective
+                    _sched["last_written_ts"] = time.time()
                 if not test_mode:
                     updates = {"SHABBAT_ACTIVE": effective}
                     # רושמים זמן-מעבר טרי רק כשהמצב המוצג באמת מתחלף (לא כשהוא נשאר זהה,
@@ -369,15 +553,24 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                     # ממזגים את שאר שדות SHABBAT_DETECTOR כדי לא לדרוס state/last_cycle_summary.
                     if effective != prev_effective:
                         sd = dict(el_config.get("SHABBAT_DETECTOR") or {})
-                        sd["state"] = fsm.state.value
+                        sd["state"] = state_str
                         sd["last_transition_ts"] = int(time.time() * 1000)
                         sd["last_transition_reason"] = "override ידני: " + new_override
                         updates["SHABBAT_DETECTOR"] = sd
                     fb.patch_elevator_config(updates)
 
+            # A change of the per-elevator SHABBAT_SOURCE (echo-safe: value
+            # comparison, not key presence) takes effect immediately.
+            if new_source != prev_source:
+                _handle_source_change(prev_source, new_source)
+
     def on_settings_update(new_settings: dict) -> None:
         nonlocal settings
         with _fsm_lock:
+            prev_geo = settings.get("GEO_NAME_ID")
+            prev_yts = settings.get("YOM_TOV_SHENI")
+            prev_offsets = schedule_offsets(settings)
+            prev_resolved = resolve_source(el_config, settings)
             # Same merge requirement as on_config_update — PATCH events are partial.
             settings = {**settings, **(new_settings or {})}
             # Push global settings (incl. SHABBAT_DETECTION tunables) into the FSM
@@ -387,18 +580,29 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
             except Exception as e:
                 log.warning("Could not propagate settings to FSM: %s", e)
 
+            # Schedule engine reactions (value comparisons - echo-safe):
+            if (
+                settings.get("GEO_NAME_ID") != prev_geo
+                or settings.get("YOM_TOV_SHENI") != prev_yts
+            ):
+                schedule.invalidate()
+            new_resolved = resolve_source(el_config, settings)
+            if new_resolved != prev_resolved:
+                # Covers elevators that INHERIT the project default.
+                _handle_source_change(prev_resolved, new_resolved)
+            elif new_resolved == "schedule" and schedule_offsets(settings) != prev_offsets:
+                _schedule_tick()
+
     # Lock must exist BEFORE we subscribe (subscriber may fire immediately).
     # RLock (re-entrant) so the SIGTERM handler can save state even if it fires
     # while the main thread already holds the lock, instead of self-deadlocking
     # and being SIGKILLed with the final save lost (#24).
     _fsm_lock = threading.RLock()
 
-    fb.subscribe_config(on_config_update)
-    fb.subscribe_settings(on_settings_update)
-
     # ── Shared mutable state (accessed by main loop AND watchdog) ─────────────
     # All access to the FSM and to these values must be guarded by _fsm_lock
-    # (already created above).
+    # (already created above).  Defined BEFORE the subscriptions so the SSE
+    # callbacks (which may fire immediately) never hit an undefined name.
     _shared = {
         "prev_event": None,                      # type: Optional[FloorEvent]
         "prev_prev_event": None,                 # two-back accepted floor (flap check, #16)
@@ -412,7 +616,11 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
         return {
             "fsm": fsm.to_dict(),
             "learner": learner.to_dict(),
+            "schedule": schedule.to_dict(),
         }
+
+    fb.subscribe_config(on_config_update)
+    fb.subscribe_settings(on_settings_update)
 
     # ── Graceful shutdown ─────────────────────────────────────────────────────
     _running = [True]
@@ -449,6 +657,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                 hebcal_ok = True
 
             override = (el_config.get("SHABBAT_OVERRIDE") or "auto")
+            source = resolve_source(el_config, settings)
             prev_state = fsm.state
 
             # ── Mechanism 1: stuck on an invalid floor too long ────────────
@@ -468,7 +677,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                 )
                 log.info("Watchdog: inactivity violation at floor %s", prev.floor)
                 vresult = fsm.process_violation(v, el_config, now, hebcal_ok)
-                _apply_result(vresult, fsm, fb, prev_state, test_mode, override)
+                _apply_result(vresult, fsm, fb, prev_state, test_mode, override, source)
                 # Reset the floor's "first seen" timestamp so we don't refire immediately
                 _shared["prev_event"] = FloorEvent(floor=prev.floor, timestamp=now)
                 prev_state = fsm.state
@@ -488,7 +697,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                 )
                 log.info("Watchdog: no-report violation")
                 vresult = fsm.process_violation(v, el_config, now, hebcal_ok)
-                _apply_result(vresult, fsm, fb, prev_state, test_mode, override)
+                _apply_result(vresult, fsm, fb, prev_state, test_mode, override, source)
                 _shared["last_event_received_ts"] = now
                 prev_state = fsm.state
 
@@ -532,15 +741,21 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                 # of them satisfy CONSECUTIVE_NONMATCH_FOR_EXIT and drive the exit.
                 fsm._consecutive_nonmatch += 1
                 vresult = fsm.process_violation(v, el_config, now, hebcal_ok)
-                _apply_result(vresult, fsm, fb, prev_state, test_mode, override)
+                _apply_result(vresult, fsm, fb, prev_state, test_mode, override, source)
                 _shared["last_missed_fire_ts"] = now
 
     def _watchdog_loop() -> None:
         # Tick every 30s.  Cheap operation when not in SHABBAT/CANDIDATE_EXIT.
+        # The schedule tick runs first - it is the always-on TIME trigger for
+        # SHABBAT_SOURCE='schedule' elevators (no-op for everyone else).
         while _running[0]:
             time.sleep(30)
             if not _running[0]:
                 break
+            try:
+                _schedule_tick()
+            except Exception as e:
+                log.warning("Schedule tick failed: %s", e)
             try:
                 _watchdog_tick()
             except Exception as e:
@@ -548,6 +763,19 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
 
     watchdog_thread = threading.Thread(target=_watchdog_loop, daemon=True, name="inactivity-watchdog")
     watchdog_thread.start()
+
+    # ── Boot alignment for non-auto sources ───────────────────────────────────
+    # 'schedule' truth is computable, so a restart (or an outage that spanned a
+    # window boundary) re-aligns Firebase immediately instead of waiting for
+    # the next boundary.  'auto' keeps today's behavior: no write on boot.
+    with _fsm_lock:
+        _boot_source = resolve_source(el_config, settings)
+    if _boot_source in ("schedule", "none"):
+        log.info("SHABBAT_SOURCE=%s - running boot alignment", _boot_source)
+        try:
+            _handle_source_change("(boot)", _boot_source)
+        except Exception as e:
+            log.warning("Boot alignment failed: %s", e)
 
     # ── Main event loop ───────────────────────────────────────────────────────
     log.info("Listening for elevator events...")
@@ -630,24 +858,26 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                     prev_fsm_state = fsm.state
                     vresult = fsm.process_violation(v, el_config, now, hebcal_ok)
                     override = (el_config.get("SHABBAT_OVERRIDE") or "auto")
-                    _apply_result(vresult, fsm, fb, prev_fsm_state, test_mode, override)
+                    source = resolve_source(el_config, settings)
+                    _apply_result(vresult, fsm, fb, prev_fsm_state, test_mode, override, source)
 
             # ── Feed to cycle analyzer ────────────────────────────────────────────
             ar = analyzer.push_event(event)
 
             prev_fsm_state = fsm.state
             override = (el_config.get("SHABBAT_OVERRIDE") or "auto")
+            source = resolve_source(el_config, settings)
 
             if ar.cycle_just_started:
                 cresult = fsm.on_cycle_started(now)
-                _apply_result(cresult, fsm, fb, prev_fsm_state, test_mode, override)
+                _apply_result(cresult, fsm, fb, prev_fsm_state, test_mode, override, source)
                 prev_fsm_state = fsm.state
 
             if ar.completed_cycle:
                 cresult = fsm.on_cycle_completed(
                     ar.completed_cycle, el_config, settings, now, hebcal_ok
                 )
-                _apply_result(cresult, fsm, fb, prev_fsm_state, test_mode, override)
+                _apply_result(cresult, fsm, fb, prev_fsm_state, test_mode, override, source)
 
                 # Auto-learn: feed matched cycles to the learner
                 if cresult and cresult.last_cycle_summary:
