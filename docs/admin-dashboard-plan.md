@@ -6,6 +6,9 @@
 > **סטטוס:** חלק 2 (צד ה-Pi: דיווח גרסה + עדכון מרחוק) **מומש** — ראה
 > [`fleet-remote-update.md`](fleet-remote-update.md). חלקים 1 (דשבורד `ramada-admin`)
 > ו-3 עדיין פתוחים. ה-config של האדמין (`econtrolelevelev`) התקבל ו-`ramada-web` ב-scope.
+>
+> 📋 **מצב עדכני ורשימת המשימות שנותרו** (לא מוזג ל-`main` / לא נפרס; חלק 1 — סקאפולד
+> נבנה ונמסר כ-bundle, טרם ב-GitHub): ראה [`admin-dashboard-status.md`](admin-dashboard-status.md).
 
 ---
 
@@ -104,6 +107,6 @@
 
 ## ▶️ הצעד הבא
 חלק 2 (צד ה-Pi) **מומש ונבדק** (14 unit-tests ב-`tests/test_fleet_agent.py`).
-הבא בתור: לפתוח את `ramada-admin` (חלק 1) — דשבורד מול `econtrolelevelev` שקורא
-`/fleet/{id}` מכל פרויקט ושולח פקודות-עדכון לפי הפרוטוקול ב-fleet-remote-update.md.
-דרושה הכרעה היכן ייווצר הריפו (ראה "מה צריך כדי להתחיל", סעיף 4).
+חלק 1 (הדשבורד) — **סקאפולד MVP נבנה** ונמסר כ-`ramada-admin.bundle` (טרם ב-GitHub;
+יצירת הריפו נחסמה בסשן). רשימת המשימות המלאה — הנחתה, הגדרת Firebase, פריסה, ומיזוג
+ל-`main` — מרוכזת ב-[`admin-dashboard-status.md`](admin-dashboard-status.md).
