@@ -28,6 +28,9 @@
     "LOG_BACKUP_ENABLED": false,
     "LOG_BACKUP_REPO_URL": "",
     "LOG_BACKUP_PREFIX": "",
-    "LOG_BACKUP_INTERVAL_DAYS": 7
+    "LOG_BACKUP_INTERVAL_DAYS": 7,
+
+    "_config_backup_comment": "CONFIG_BACKUP_ENABLED (ברירת-מחדל true): יחד עם גיבוי הלוגים נשמר גם עותק מסונן של קובץ ההגדרות ב-{project}/{ELEVATOR_ID}/config/rfid_config.sanitized.json, כדי לשחזר את מיפוי-התגים אם ה-SD נמחק. הקובץ מסונן fail-closed: ה-tags וההגדרות הלא-סודיות נשמרים, אבל ה-SECRET_KEY וכל טוקן/URL עם token מוסתרים (***REDACTED***) - שום סוד לא מגיע לריפו הגיבוי. false = לא לגבות את הקונפיג כלל.",
+    "CONFIG_BACKUP_ENABLED": true
   }
 }

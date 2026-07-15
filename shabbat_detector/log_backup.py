@@ -1,5 +1,6 @@
 """
-Log backup - push the Pi's logs directory to a separate GitHub repo.
+Log backup - push the Pi's logs directory (and a sanitized config snapshot) to a
+separate GitHub repo.
 
 Each Pi pushes only into its own subfolder ``{ELEVATOR_ID}/`` of a shared logs
 repo (for example ``elibic/elevator-logs``), so concurrent pushes from different
@@ -12,7 +13,18 @@ of failing every backup with a permanent non-fast-forward. Driven by the fleet
 agent: weekly automatically and on-demand from the dashboard ("backup_logs"
 command). See ``docs/fleet-remote-update.md``.
 
-Config (``rfid_config.json -> settings``, all optional):
+Config snapshot
+---------------
+Alongside the logs, a **sanitized** copy of ``rfid_config.json`` is written to
+``{project}/{ELEVATOR_ID}/config/rfid_config.sanitized.json`` so the
+hard-to-recreate RFID tag->floor mapping survives an SD-card loss. It is
+sanitized *fail-closed*: the ``tags`` mapping and non-secret settings are kept,
+but the ``SECRET_KEY`` and every token/URL-embedded credential are redacted, so
+no secret ever reaches the (possibly shared) backup repo - matching the repo's
+hard rule that the SECRET_KEY value is never written to Git. See
+``_sanitize_config``. Gated by ``CONFIG_BACKUP_ENABLED`` (default on).
+
+Settings (``rfid_config.json -> settings``, all optional):
   ``LOG_BACKUP_ENABLED``    gate for the *weekly* auto backup (on-demand ignores it)
   ``LOG_BACKUP_REPO_URL``   https URL, may embed a write token:
                             ``https://x-access-token:<PAT>@github.com/elibic/elevator-logs.git``
@@ -20,6 +32,7 @@ Config (``rfid_config.json -> settings``, all optional):
   ``LOG_BACKUP_DIR``        local working clone (default ``/var/lib/elevator-logs``)
   ``LOG_BACKUP_GIT_NAME``   commit author name  (default ``elevator-pi``)
   ``LOG_BACKUP_GIT_EMAIL``  commit author email (default ``elevator-pi@econtrol.co.il``)
+  ``CONFIG_BACKUP_ENABLED``   include the sanitized config snapshot (default true)
   ``LOG_BACKUP_MAX_FILE_MB``  per-file size cap (default 90). GitHub hard-rejects
                             files over 100MB (the "gh.io/lfs" push error) - one log
                             that ballooned past the limit used to fail the *whole*
@@ -30,12 +43,13 @@ Config (``rfid_config.json -> settings``, all optional):
                             note instead of breaking the push.
 
 Security: the repo may be public (no secrets in the logs, by decision), but we
-still scrub the ``SECRET_KEY`` value defensively before pushing, and never log
-``LOG_BACKUP_REPO_URL`` (it embeds the PAT).
+still scrub the ``SECRET_KEY`` value defensively out of the logs and the config
+snapshot before pushing, and never log ``LOG_BACKUP_REPO_URL`` (it embeds the PAT).
 """
 from __future__ import annotations
 
 import gzip
+import json
 import logging
 import os
 import re
@@ -56,6 +70,11 @@ _BACKOFF_BASE = 1.5                                      # seconds; grows per at
 
 _URL_CRED = re.compile(r"https://[^@/\s]+@")              # user:token@ in any text
 _SECRET_KV = re.compile(r'("?secret_key"?\s*[:=]\s*"?)[^"\s,}]+')
+# A config key whose *name* looks credential-shaped: its value is redacted no
+# matter what, so a new secret field added to the config later leaks nothing by
+# default (fail-closed). Matches SECRET_KEY, *_TOKEN, *PASSWORD, API_KEY, …
+_SECRET_NAME = re.compile(r"secret|token|password|passwd|credential|private[_-]?key|api[_-]?key", re.I)
+_REDACTED = "***REDACTED***"
 
 
 def _redact(text: str) -> str:
@@ -68,6 +87,80 @@ def _scrub_text(text: str, secret: str) -> str:
     if secret:
         text = text.replace(secret, "***")
     return _SECRET_KV.sub(r"\1***", text)
+
+
+def _scrub_config_value(text: str, secret: str) -> str:
+    """Scrub a single (non-secret-named) config string value: strip any
+    URL-embedded credential (``https://user:tok@…`` -> ``https://***@…``) and
+    the live SECRET_KEY value if it happens to appear inside it."""
+    if secret and secret in text:
+        text = text.replace(secret, _REDACTED)
+    return _URL_CRED.sub("https://***@", text)
+
+
+def _sanitize_config(cfg: dict, secret: str = "") -> dict:
+    """Return a deep copy of ``cfg`` safe to store in a (possibly shared/public)
+    Git repo: the RFID ``tags`` mapping and non-secret settings are preserved,
+    but every credential is stripped. Redaction is fail-closed and layered:
+
+    * a key whose *name* looks secret (secret/token/password/api-key/…) -> its
+      value becomes ``***REDACTED***``, whatever its type;
+    * any remaining string value carrying a URL-embedded credential
+      (``https://user:tok@…``) is scrubbed;
+    * the live ``SECRET_KEY`` value, wherever it appears, is scrubbed.
+
+    This keeps the hard-to-recreate tag mapping recoverable without ever writing
+    the SECRET_KEY (or a PAT/token) to Git - the repo's hard rule.
+    """
+    def clean(value, key_hint: str = ""):
+        if key_hint and _SECRET_NAME.search(key_hint):
+            return _REDACTED
+        if isinstance(value, dict):
+            return {k: clean(v, str(k)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [clean(v) for v in value]
+        if isinstance(value, str):
+            return _scrub_config_value(value, secret)
+        return value
+    return clean(cfg)
+
+
+def _write_config_snapshot(config_path: str, dest: str, secret: str) -> bool:
+    """Write a sanitized snapshot of the Pi's config to
+    ``dest/config/rfid_config.sanitized.json`` (tag mapping kept, secrets
+    stripped). Returns True iff a snapshot was written.
+
+    Fail-closed: on any read/parse/sanitize error nothing is written (never the
+    raw config), and a final guard aborts the write if the SECRET_KEY somehow
+    survives - so the log backup proceeds but no secret can leak. Output is
+    deterministic (sorted keys), so an unchanged config yields identical bytes
+    and therefore no spurious commit."""
+    if not config_path or not os.path.isfile(config_path):
+        return False
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception as e:
+        log.warning("config backup skipped - cannot read config: %s", e)
+        return False
+    try:
+        safe = _sanitize_config(cfg, secret)
+        text = json.dumps(safe, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    except Exception as e:
+        log.warning("config backup skipped - sanitize failed: %s", e)
+        return False
+    if secret and secret in text:                       # defense in depth - never push the raw secret
+        log.error("config backup aborted - secret survived sanitize; not writing snapshot")
+        return False
+    try:
+        cfg_dir = os.path.join(dest, "config")
+        os.makedirs(cfg_dir, exist_ok=True)
+        with open(os.path.join(cfg_dir, "rfid_config.sanitized.json"), "w", encoding="utf-8") as f:
+            f.write(text)
+    except Exception as e:
+        log.warning("config backup skipped - cannot write snapshot: %s", e)
+        return False
+    return True
 
 
 def _sanitize_slug(s: str) -> str:
@@ -195,11 +288,16 @@ def _sync_to_origin(work: str, branch: str) -> None:
     _run(["git", "-C", work, "checkout", "-B", branch])    # empty remote / first backup: prepare commit
 
 
-def backup_logs(settings: dict, elevator_id: str, logs_dir: str) -> tuple[bool, str]:
-    """Push ``logs_dir`` into ``{elevator_id}/`` of the backup repo.
+def backup_logs(settings: dict, elevator_id: str, logs_dir: str,
+                config_path: str = "") -> tuple[bool, str]:
+    """Push ``logs_dir`` (and a sanitized ``config_path`` snapshot) into
+    ``{project}/{elevator_id}/`` of the backup repo.
 
     Returns ``(ok, detail)`` and never raises - the caller (fleet agent) must
-    never have its heartbeat broken by a backup failure.
+    never have its heartbeat broken by a backup failure. When ``config_path`` is
+    given and ``CONFIG_BACKUP_ENABLED`` is on (default), a redacted copy of the
+    config (tag mapping kept, SECRET_KEY/tokens stripped) is committed alongside
+    the logs - see ``_write_config_snapshot``.
     """
     repo_url = str(settings.get("LOG_BACKUP_REPO_URL", "")).strip()
     if not repo_url:
@@ -209,6 +307,9 @@ def backup_logs(settings: dict, elevator_id: str, logs_dir: str) -> tuple[bool, 
     name = str(settings.get("LOG_BACKUP_GIT_NAME", "") or "elevator-pi")
     email = str(settings.get("LOG_BACKUP_GIT_EMAIL", "") or "elevator-pi@econtrol.co.il")
     secret = str(settings.get("SECRET_KEY", ""))
+    # Config snapshot is on by default; a project can opt out with a falsy value.
+    config_enabled = str(settings.get("CONFIG_BACKUP_ENABLED", "true")).strip().lower() \
+        not in ("0", "false", "no", "off", "")
     try:
         max_mb = float(settings.get("LOG_BACKUP_MAX_FILE_MB", _DEFAULT_MAX_FILE_MB))
     except (TypeError, ValueError):
@@ -217,7 +318,11 @@ def backup_logs(settings: dict, elevator_id: str, logs_dir: str) -> tuple[bool, 
 
     if shutil.which("git") is None:
         return False, "git not installed"
-    if not os.path.isdir(logs_dir):
+    have_logs = os.path.isdir(logs_dir)
+    want_config = config_enabled and bool(config_path) and os.path.isfile(config_path)
+    # Only bail if there is nothing at all to back up - a Pi with a config but no
+    # logs dir yet (e.g. schedule-only building) can still back its config up.
+    if not have_logs and not want_config:
         return False, f"logs dir missing: {logs_dir}"
 
     # 1. ensure a local working clone exists (persistent under `work`)
@@ -250,9 +355,13 @@ def backup_logs(settings: dict, elevator_id: str, logs_dir: str) -> tuple[bool, 
     for attempt in range(_PUSH_ATTEMPTS):
         _sync_to_origin(work, branch)                       # converge onto origin/<branch> (or prep first commit)
 
-        copied, oversized = _copy_scrubbed(logs_dir, dest, secret, max_bytes)
-        if copied == 0 and not oversized:
-            return True, "no log files to back up"
+        copied, oversized = _copy_scrubbed(logs_dir, dest, secret, max_bytes) if have_logs else (0, [])
+        # Sanitized config snapshot alongside the logs (idempotent + deterministic,
+        # so an unchanged config adds no commit). Written every attempt because a
+        # hard-sync wipes the snapshot, exactly like the log copy above.
+        cfg_written = _write_config_snapshot(config_path, dest, secret) if config_enabled else False
+        if copied == 0 and not oversized and not cfg_written:
+            return True, "no log files or config to back up"
 
         _run(["git", "-C", work, "add", rel])
         rc, _ = _run(["git", "-C", work, "diff", "--cached", "--quiet"])
@@ -262,13 +371,14 @@ def backup_logs(settings: dict, elevator_id: str, logs_dir: str) -> tuple[bool, 
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
         rc, out = _run(["git", "-C", work,
                         "-c", f"user.name={name}", "-c", f"user.email={email}",
-                        "commit", "-m", f"logs: {rel} {stamp}"])
+                        "commit", "-m", f"backup: {rel} {stamp}"])
         if rc != 0:
             return False, f"commit failed: {_redact(out)[:160]}"
 
         rc, out = _run(["git", "-C", work, "push", "origin", f"HEAD:{branch}"])
         if rc == 0:
-            detail = f"pushed {copied} file(s) to {rel}"
+            parts = ([f"{copied} log file(s)"] if copied else []) + (["config"] if cfg_written else [])
+            detail = f"pushed {' + '.join(parts) or 'changes'} to {rel}"
             if oversized:
                 detail += f" [{'; '.join(oversized)}]"
             return True, detail

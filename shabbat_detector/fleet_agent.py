@@ -29,8 +29,9 @@ Data model (must stay in sync with the dashboard)
   The agent validates ``secret_key`` against the local ``SECRET_KEY`` (the same
   bearer-token model as ``firebase_client.patch_*``), runs the update command
   (default ``./setup.sh``) reporting ``update_status``, or backs the logs dir up
-  to the configured repo reporting ``backup_status``, and clears the command.
-  Log backup also runs automatically once a week (``LOG_BACKUP_INTERVAL_DAYS``).
+  to the configured repo (with a sanitized config snapshot - tag mapping kept,
+  secrets stripped) reporting ``backup_status``, and clears the command. Log
+  backup also runs automatically once a week (``LOG_BACKUP_INTERVAL_DAYS``).
 
 Replay safety
 -------------
@@ -244,7 +245,7 @@ class FleetClient:
 class FleetAgent:
     def __init__(self, *, client: FleetClient, secret_key: str, elevator_id: str,
                  repo_dir: str, settings: dict, persistence: StatePersistence,
-                 state: dict, test_mode: bool = False) -> None:
+                 state: dict, test_mode: bool = False, config_path: str = "") -> None:
         self._client = client
         self._key = secret_key
         self._id = elevator_id
@@ -252,6 +253,9 @@ class FleetAgent:
         self._persistence = persistence
         self._state = state
         self._test_mode = test_mode
+        # Path to rfid_config.json, so log backups can include a sanitized
+        # snapshot of the config (tag mapping) - see log_backup._write_config_snapshot.
+        self._config_path = config_path
 
         self._report_interval = float(settings.get("FLEET_REPORT_INTERVAL", _DEFAULT_REPORT_INTERVAL))
         self._poll_interval = float(settings.get("FLEET_POLL_INTERVAL", _DEFAULT_POLL_INTERVAL))
@@ -447,11 +451,12 @@ class FleetAgent:
         even if LOG_BACKUP_ENABLED is off, as long as a repo URL is configured -
         backup_logs() itself reports a clear reason when it is not."""
         if self._test_mode:
-            log.info("[test] would back up logs from %s", self._logs_dir)
+            log.info("[test] would back up logs from %s (+config %s)",
+                     self._logs_dir, self._config_path or "-")
             return True, "test-mode"
         try:
             from .log_backup import backup_logs
-            return backup_logs(self._settings, self._id, self._logs_dir)
+            return backup_logs(self._settings, self._id, self._logs_dir, self._config_path)
         except Exception as e:
             return False, str(e)[:180]
 
@@ -561,7 +566,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False,
     agent = FleetAgent(
         client=client, secret_key=secret_key, elevator_id=elevator_id,
         repo_dir=repo_dir, settings=s, persistence=persistence, state=state,
-        test_mode=test_mode,
+        test_mode=test_mode, config_path=os.path.abspath(config_path),
     )
     log.info("Fleet agent starting for elevator %s (repo=%s, version=%s, commit=%s)",
              elevator_id, repo_dir, detect_version(repo_dir), detect_commit(repo_dir))

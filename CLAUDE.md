@@ -12,6 +12,9 @@
   הוא **מוחרג ב-`.gitignore`** - לעולם אל תוסיף אותו ל-Git, ואל תכתוב את ערך ה-`SECRET_KEY`
   בשום קובץ מנוהל (גם לא בקובץ הזה).
 - תבנית למבנה: `rfid_config.example.json` (הסוד מרוקן). הקונפיג האמיתי חי על כל Pi בנפרד.
+- **גיבוי-קונפיג:** מותר לגבות עותק **מסונן** של הקונפיג (מיפוי-תגים) לריפו הגיבוי - `log_backup.py`
+  מסיר את ה-`SECRET_KEY` וכל טוקן לפני push (`***REDACTED***`, fail-closed). הקובץ המקורי לעולם
+  לא נכנס ל-Git. ראה סקשן "ניהול-צי / עדכון מרחוק".
 
 ## התקנה / עדכון
 - **Pi חדש:** `git clone` → `sudo ./setup.sh` (אשף טרמינל) או `sudo ./setup.sh --web` (גרפי).
@@ -147,6 +150,13 @@
   גיבוי שבועי אוטומטי. כל Pi דוחף את `logs/` לתת-תיקייה **`{project}/{ELEVATOR_ID}/`** בריפו GitHub
   **נפרד** (`LOG_BACKUP_REPO_URL` עם token כתיבה, נפרד מטוקן הקוד). ה-`project` נגזר מ-`FIREBASE_URL`
   (דריסה ב-`LOG_BACKUP_PREFIX`) כדי שאותה מעלית בכמה פרויקטים לא תתנגש. מנקה `secret_key` מהלוגים לפני push.
+- **גיבוי-קונפיג (מיפוי-תגים)** (עודכן יולי 2026, גרסה 1.1.1): יחד עם הלוגים נשמר גם עותק **מסונן**
+  של `rfid_config.json` ב-`{project}/{ELEVATOR_ID}/config/rfid_config.sanitized.json`, כדי לשחזר את
+  **מיפוי-התגים** (שקשה לשחזר ידנית) אם נמחק ה-SD. הסינון **fail-closed** (`_sanitize_config`+
+  `_write_config_snapshot`): ה-`tags` וההגדרות הלא-סודיות נשמרים, אבל ה-`SECRET_KEY` וכל שדה
+  token/סיסמה/URL-עם-token מוחלפים ב-`***REDACTED***` - **שום סוד לא מגיע לריפו הגיבוי** (תואם לכלל
+  הקשיח: אסור לכתוב `SECRET_KEY` ל-Git). דטרמיניסטי (קונפיג ללא-שינוי ⇒ אין commit מיותר). כיבוי:
+  `CONFIG_BACKUP_ENABLED=false`. נכלל אוטומטית בכל `backup_logs` (שבועי + כפתור הדשבורד).
 - **לוגים:** רוטציה שבועית **ביום ג'** (`when="W1"`), שמירת **4 שבועות** (tracker+detector).
 - `rfid-tracker.service`: ממתין לפורט הסיריאל (לולאה, לא sleep קבוע) + `StartLimitIntervalSec=0`
   כדי שיעלה אמין אחרי ריבוט גם אם ה-USB מאחר. **אסור** להוסיף `After=multi-user.target`

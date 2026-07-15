@@ -180,6 +180,7 @@
 | `LOG_BACKUP_INTERVAL_DAYS` | `7` | מרווח הגיבוי האוטומטי (ימים). |
 | `LOG_BACKUP_GIT_NAME` / `LOG_BACKUP_GIT_EMAIL` | `elevator-pi` / `…@econtrol.co.il` | זהות ה-commit. |
 | `LOG_BACKUP_DIR` | `/var/lib/elevator-logs` | clone מקומי קבוע (root). |
+| `CONFIG_BACKUP_ENABLED` | `true` | לצרף לגיבוי עותק **מסונן** של `rfid_config.json` (מיפוי-תגים; ה-`SECRET_KEY`/טוקנים מוסתרים). `false` = לא לגבות קונפיג. |
 
 `ELEVATOR_ID`, `SECRET_KEY`, `FIREBASE_URL` — כבר קיימים בקונפיג; הסוכן משתמש בהם כמו ה-detector.
 
@@ -201,9 +202,15 @@
   slug מ-`databaseURL` של הפרויקט, כך שקישור "לוגים" בכרטיס מצביע בדיוק לאותה תיקייה.
 - רץ גם **שבועית אוטומטית** (`LOG_BACKUP_ENABLED` + `LOG_BACKUP_INTERVAL_DAYS`), עם `last_backup`
   ב-`state_fleet_{id}.json`. מדווח `backup_status` (`backing_up`/`ok`/`failed: …`) ל-`/fleet/{id}`.
-- **אבטחה:** הריפו יכול להיות ציבורי (אין סודות בלוגים), אבל `push` דורש **token כתיבה**
+- **גיבוי-קונפיג (מיפוי-תגים):** לצד הלוגים נשמר עותק **מסונן** של הקונפיג ב-
+  `{project}/{ELEVATOR_ID}/config/rfid_config.sanitized.json`, כדי לשחזר את מיפוי-התגים אם נמחק ה-SD.
+  הסינון **fail-closed**: ה-`tags` וההגדרות הלא-סודיות נשמרים, אבל ה-`SECRET_KEY` וכל שדה
+  token/סיסמה/URL-עם-token מוחלפים ב-`***REDACTED***`, ואם בטעות הסוד עדיין נוכח אחרי הסינון -
+  הקובץ **לא** נכתב כלל (שום סוד לא מגיע לריפו). דטרמיניסטי (קונפיג ללא-שינוי ⇒ אין commit מיותר).
+  כיבוי: `CONFIG_BACKUP_ENABLED=false`.
+- **אבטחה:** הריפו יכול להיות ציבורי (אין סודות בלוגים/בקונפיג המסונן), אבל `push` דורש **token כתיבה**
   שמוטמע ב-`LOG_BACKUP_REPO_URL` - **נפרד** מטוקן משיכת-הקוד (שהוא read-only) ו-scope **רק** לריפו
-  הלוגים. הסוכן מנקה הופעות `secret_key` מהלוגים לפני push, ולעולם לא מתעד את ה-URL עם הטוקן.
+  הלוגים. הסוכן מנקה הופעות `secret_key` מהלוגים ומהקונפיג לפני push, ולעולם לא מתעד את ה-URL עם הטוקן.
 
 ## תצוגת מצב-שירותים בדשבורד
 
