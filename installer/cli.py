@@ -101,6 +101,7 @@ def _run_unattended(inst: core.Installer) -> None:
     inst.install_web_service()
     inst.install_fleet_agent()
     inst.install_desktop_shortcut()
+    inst.configure_sd_wear()
     inst.start_services()
 
     _progress("✓ העדכון הושלם (unattended).", "ok")
@@ -179,6 +180,7 @@ def run_cli(dry_run: bool = False, mock_serial: bool = False, unattended: bool =
     inst.install_web_service()
     inst.install_fleet_agent()
     inst.install_desktop_shortcut()
+    inst.configure_sd_wear()   # לפי settings.REDUCE_SD_WEAR (ברירת מחדל: כבוי)
     inst.start_services()
 
     print(f"\n{GREEN}{BOLD}✓ ההתקנה הושלמה!{RESET}")

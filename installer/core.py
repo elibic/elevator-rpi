@@ -38,6 +38,15 @@ STATE_DIR = "/var/lib/shabbat_detector"
 APT_PACKAGES = ["python3-venv", "python3-pip", "git"]
 PIP_PACKAGES = ["requests", "sseclient-py", "pyserial", "flask"]
 
+# ── הקטנת שחיקת SD (settings.REDUCE_SD_WEAR, ברירת מחדל כבוי) ────────────────
+# ה-marker מתעד בדיוק מה שינינו, כדי ש-false יחזיר רק את מה שאנחנו עשינו
+# (ולא ידרוס שינויים ידניים של המפעיל). קבצי ה-state של הזיהוי חייבים להישאר
+# על הדיסק - ראו configure_sd_wear.
+SDWEAR_MARKER = "/etc/elevator-reduce-sd-wear.json"
+JOURNALD_DROPIN = "/etc/systemd/journald.conf.d/60-elevator-volatile.conf"
+AZLUX_LIST = "/etc/apt/sources.list.d/azlux.list"
+AZLUX_KEYRING = "/usr/share/keyrings/azlux-archive-keyring.gpg"
+
 # מזהה ה-USB של קורה ה-RFID (CP210x) — נכרך ידנית לדרייבר ה-in-kernel.
 CP210X_USB_ID = "1560 0003"
 
@@ -482,6 +491,204 @@ class Installer:
         self._chown(os.path.dirname(target), self.env.user)
         self.emit("הדשבורד יעלה אוטומטית בהתחברות (autostart)", "ok")
 
+    # ── 8b. הקטנת שחיקת כרטיס ה-SD (opt-in) ──────────────────────────────────
+    def _sd_wear_enabled(self) -> bool:
+        """settings.REDUCE_SD_WEAR - ברירת מחדל: כבוי (opt-in, אפס שינוי בפריסות קיימות)."""
+        try:
+            val = self.load_config().get("settings", {}).get("REDUCE_SD_WEAR", False)
+        except Exception:
+            return False
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+    def _load_sdwear_marker(self) -> dict:
+        try:
+            with open(SDWEAR_MARKER, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _root_fstab_has_noatime(self, fstab: str = "/etc/fstab") -> Optional[bool]:
+        """True/False לשורת ה-root ב-fstab; None אם לא נמצאה שורה."""
+        try:
+            with open(fstab, "r", encoding="utf-8") as f:
+                for line in f:
+                    fields = line.split("#", 1)[0].split()
+                    if len(fields) >= 4 and fields[1] == "/":
+                        return "noatime" in fields[3].split(",")
+        except OSError:
+            pass
+        return None
+
+    def _add_root_noatime(self, fstab: str = "/etc/fstab") -> bool:
+        """מוסיף noatime לאופציות שורת ה-root ב-fstab (עריכה נקודתית, שומר הכל)."""
+        try:
+            with open(fstab, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            for i, line in enumerate(lines):
+                fields = line.split("#", 1)[0].split()
+                if len(fields) >= 4 and fields[1] == "/" and "noatime" not in fields[3].split(","):
+                    lines[i] = line.replace(fields[3], fields[3] + ",noatime", 1)
+                    with open(fstab, "w", encoding="utf-8") as f:
+                        f.writelines(lines)
+                    return True
+        except OSError as e:
+            self.emit(f"אזהרה: עריכת fstab נכשלה: {e}", "warn")
+        return False
+
+    def _unit_exists(self, unit: str) -> bool:
+        try:
+            out = subprocess.run(["systemctl", "list-unit-files", unit],
+                                 capture_output=True, text=True, timeout=10).stdout
+            return unit in out
+        except Exception:
+            return False
+
+    def configure_sd_wear(self) -> StepResult:
+        """מפעיל/מכבה את חבילת הקטנת-הכתיבות לפי settings.REDUCE_SD_WEAR.
+
+        מופעל (true): לוגי מערכת ב-RAM במקום על הכרטיס -
+          1. journald -> Storage=volatile (drop-in; הלוג חי ב-/run, נמחק בריבוט).
+          2. log2ram (ריפו azlux) - tmpfs על /var/log עם סנכרון תקופתי לדיסק.
+          3. noatime לשורת ה-root ב-fstab (ברירת המחדל של RPi OS - מוודאים שקיים).
+          4. כיבוי swap על הכרטיס (dphys-swapfile); zram-swap (RAM) לא נוגעים בו.
+
+        מה ש-בכוונה נשאר על הדיסק (חובה שישרוד ריבוט/נתק-חשמל):
+          - /var/lib/shabbat_detector - state של ה-FSM, חלונות ה-schedule
+            (fail-closed) ו-state של סוכן-הצי (הגנת-replay). לא תחת /var/log!
+          - logs/ בתיקיית הפרויקט - לוגי tracker/detector (רוטציה שבועית, מגובים
+            ל-GitHub); הם רשומת-הדיבוג היחידה כש-journald הפך volatile.
+        כיבוי (false/חסר): מחזיר רק את מה שאנחנו שינינו, לפי ה-marker.
+        """
+        enabled = self._sd_wear_enabled()
+        marker = self._load_sdwear_marker()
+        if not enabled and not marker:
+            return StepResult("sd_wear", True, "כבוי (ברירת מחדל) - לא שונה דבר")
+        if not self._require_root():
+            return StepResult("sd_wear", False, "no root")
+
+        if enabled:
+            return self._sd_wear_enable(marker)
+        return self._sd_wear_disable(marker)
+
+    def _sd_wear_enable(self, marker: dict) -> StepResult:
+        self.emit("מפעיל הקטנת שחיקת SD (REDUCE_SD_WEAR)…", "step")
+        problems: list[str] = []
+
+        # 1. journald -> RAM. שירותי systemd כותבים stdout ל-journal כל היום;
+        # במצב volatile זה נשאר ב-/run (RAM) ואובד בריבוט - לוגי הקבצים של
+        # האפליקציה (logs/) נשארים על הדיסק והם רשומת-הדיבוג לאורך זמן.
+        self._write_file(JOURNALD_DROPIN, (
+            "# נוצר ע\"י installer של מערכת המעלית (settings.REDUCE_SD_WEAR).\n"
+            "# יומן המערכת ב-RAM במקום על כרטיס ה-SD; נמחק בריבוט.\n"
+            "# journalctl -u shabbat-detector -f ממשיך לעבוד כרגיל (על הבוט הנוכחי).\n"
+            "[Journal]\n"
+            "Storage=volatile\n"
+            "RuntimeMaxUse=32M\n"), mode=0o644)
+        if not self.dry_run:
+            if os.path.isdir("/var/log/journal"):
+                # היומן הפרסיסטנטי הישן - לא ייכתב יותר; מסירים כדי לפנות מקום.
+                self._run(["rm", "-rf", "/var/log/journal"], check=False)
+                marker["journal_dir_removed"] = True
+            self._run(["systemctl", "restart", "systemd-journald"], check=False)
+        marker["journald_dropin"] = True
+
+        # 2. log2ram - tmpfs על /var/log, סנכרון יומי + בעצירה מסודרת. מכסה את מה
+        # ש-volatile לא תופס (dpkg.log וכו'). ברירת המחדל של PATH_DISK היא /var/log
+        # בלבד - ולכן /var/lib (ה-state) לא מושפע.
+        if not shutil.which("log2ram") and not os.path.exists("/etc/log2ram.conf"):
+            self.emit("מתקין log2ram (ריפו azlux)…", "step")
+            try:
+                if not os.path.exists(AZLUX_KEYRING):
+                    self._run(["wget", "-qO", AZLUX_KEYRING, "https://azlux.fr/repo.gpg"])
+                if not os.path.exists(AZLUX_LIST):
+                    self._write_file(AZLUX_LIST,
+                                     f"deb [signed-by={AZLUX_KEYRING}] "
+                                     "http://packages.azlux.fr/debian/ stable main\n", mode=0o644)
+                    marker["azlux_repo_added"] = True
+                self._run(["apt-get", "update", "-qq"], check=False)
+                self._run(["apt-get", "install", "-y", "log2ram"])
+                marker["log2ram_installed"] = True
+            except (subprocess.CalledProcessError, OSError) as e:
+                problems.append("log2ram לא הותקן (אין רשת לריפו azlux?)")
+                self.emit(f"אזהרה: התקנת log2ram נכשלה ({e}); שאר הצעדים חלים - "
+                          "אפשר להריץ setup שוב כשיש רשת.", "warn")
+        if os.path.exists("/etc/log2ram.conf") and not self.dry_run:
+            # 64M מספיקים בשפע אחרי ש-journald עבר ל-volatile, ובטוחים גם ל-Pi עם 512MB.
+            self._run(["sed", "-i", "s|^SIZE=.*|SIZE=64M|", "/etc/log2ram.conf"], check=False)
+            self._run(["systemctl", "enable", "log2ram"], check=False)
+            # בדיקת בטיחות: ש-PATH_DISK לא יכסה בטעות את תיקיות ה-state.
+            try:
+                with open("/etc/log2ram.conf", "r", encoding="utf-8") as f:
+                    conf = f.read()
+                for line in conf.splitlines():
+                    if line.startswith("PATH_DISK=") and "/var/lib" in line:
+                        problems.append(f"PATH_DISK של log2ram מכסה /var/lib - ה-state יעבור ל-RAM! ({line})")
+                        self.emit("אזהרה: PATH_DISK של log2ram חייב להישאר /var/log בלבד!", "warn")
+            except OSError:
+                pass
+
+        # 3. noatime על שורת ה-root (ברירת המחדל של RPi OS; מוודאים ומוסיפים אם חסר).
+        has = self._root_fstab_has_noatime()
+        if has is False and not self.dry_run:
+            if self._add_root_noatime():
+                marker["fstab_noatime_added"] = True
+                self.emit("נוסף noatime לשורת ה-root ב-fstab (ייכנס לתוקף בריבוט)", "ok")
+        elif has:
+            self.emit("noatime כבר מוגדר ב-fstab ✓", "ok")
+
+        # 4. swap על הכרטיס (dphys-swapfile) - כיבוי. zram (swap ב-RAM דחוס, אם
+        # קיים) לא שוחק את הכרטיס ולכן לא נוגעים בו.
+        if self._unit_exists("dphys-swapfile.service"):
+            st = self.service_status("dphys-swapfile")
+            if st["enabled"] in ("enabled", "static") or st["active"] == "active":
+                self._run(["dphys-swapfile", "swapoff"], check=False)
+                self._run(["systemctl", "disable", "--now", "dphys-swapfile"], check=False)
+                if not self.dry_run and os.path.exists("/var/swap"):
+                    self._run(["rm", "-f", "/var/swap"], check=False)
+                marker["dphys_swap_disabled"] = True
+                self.emit("swap על ה-SD (dphys-swapfile) כובה; שים לב: בלי swap, עומס "
+                          "זיכרון חריג (למשל דפדפן כבד) עלול להיסגר ע\"י ה-OOM killer", "ok")
+        else:
+            self.emit("אין dphys-swapfile (כנראה zram-swap ב-RAM) - אין swap על הכרטיס, מדלג", "info")
+
+        # תיעוד מפורש: ה-state שחייב לשרוד נשאר על הדיסק - לא הועבר ל-RAM.
+        for p in (STATE_DIR, os.path.join(self.env.project_dir, "logs")):
+            self.emit(f"נשאר על הדיסק (שורד ריבוט/נתק-חשמל): {p}", "info")
+
+        if not self.dry_run:
+            self._write_file(SDWEAR_MARKER, json.dumps(marker, ensure_ascii=False, indent=2) + "\n",
+                             mode=0o644)
+        detail = "journald=volatile, log2ram, noatime, swap-off; ייכנס לתוקף מלא בריבוט"
+        if problems:
+            detail += " | בעיות: " + "; ".join(problems)
+        self.emit("הקטנת שחיקת SD הופעלה - " + detail, "ok")
+        return StepResult("sd_wear", not problems, detail)
+
+    def _sd_wear_disable(self, marker: dict) -> StepResult:
+        """כיבוי מפורש (false/הסרת המפתח) אחרי שהופעל בעבר - מחזיר את מה ששינינו."""
+        self.emit("מכבה הקטנת שחיקת SD (REDUCE_SD_WEAR כבוי אך היה פעיל)…", "step")
+        if self.dry_run:
+            return StepResult("sd_wear", True, "DRY-RUN: היה מוחזר לפי ה-marker")
+        if marker.get("journald_dropin") and os.path.exists(JOURNALD_DROPIN):
+            os.remove(JOURNALD_DROPIN)
+        if marker.get("journal_dir_removed"):
+            os.makedirs("/var/log/journal", exist_ok=True)   # Storage=auto יחזור לפרסיסטנטי
+        self._run(["systemctl", "restart", "systemd-journald"], check=False)
+        if marker.get("log2ram_installed"):   # רק אם אנחנו התקנו - לא נוגעים בהתקנה ידנית של המפעיל
+            self._run(["systemctl", "disable", "log2ram"], check=False)
+            self.emit("log2ram נוטרל (החבילה נשארת מותקנת; /var/log חוזר לדיסק בריבוט)", "info")
+        if marker.get("azlux_repo_added") and os.path.exists(AZLUX_LIST):
+            os.remove(AZLUX_LIST)
+        if marker.get("dphys_swap_disabled") and self._unit_exists("dphys-swapfile.service"):
+            self._run(["systemctl", "enable", "--now", "dphys-swapfile"], check=False)
+        # noatime נשאר בכוונה - זו ברירת המחדל של RPi OS ואין סיבה להחזיר atime.
+        try:
+            os.remove(SDWEAR_MARKER)
+        except OSError:
+            pass
+        self.emit("הוחזר; ייכנס לתוקף מלא בריבוט", "ok")
+        return StepResult("sd_wear", True, "בוטל לפי ה-marker")
+
     # ── 9. ניהול שירותים ──────────────────────────────────────────────────────
     def _systemctl(self, action: str, service: str) -> bool:
         try:
@@ -651,6 +858,7 @@ class Installer:
             self.install_web_service(),
             self.install_fleet_agent(),
             self.install_desktop_shortcut(),
+            self.configure_sd_wear(),
         ]
         if rpi_connect:
             results.append(self.install_rpi_connect(lite=rpi_connect_lite))

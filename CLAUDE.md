@@ -130,6 +130,30 @@
   מיושרת חזרה תוך טיק-שניים; שליטה ידנית עמידה = `SHABBAT_OVERRIDE`.
 - **בדיקות:** `python3 -m pytest tests/` (במחשב פיתוח; חדש בגרסה זו).
 
+## הקטנת שחיקת SD והגנה מנתקי-חשמל - opt-in (עודכן יולי 2026, גרסה 1.1.2)
+- **מה:** `settings.REDUCE_SD_WEAR=true` ב-rfid_config.json (ברירת-מחדל **false** - אפס שינוי
+  בפריסות קיימות) ⇒ `configure_sd_wear` ב-`installer/core.py` (רץ בכל `setup.sh`, כולל עדכון-צי
+  unattended) מפעיל: (1) **journald ל-RAM** (`Storage=volatile` ב-drop-in
+  `/etc/systemd/journald.conf.d/60-elevator-volatile.conf`; `journalctl -u ... -f` ממשיך לעבוד,
+  אבל היומן לא שורד ריבוט); (2) **log2ram** מריפו azlux - tmpfs על `/var/log` עם סנכרון תקופתי
+  לדיסק (SIZE=64M; נכשל-רך בלי רשת - שאר הצעדים חלים); (3) **noatime** על שורת ה-root ב-fstab
+  (ממילא ברירת המחדל של RPi OS - מוודאים); (4) **כיבוי swap על הכרטיס** (dphys-swapfile swapoff +
+  disable + מחיקת /var/swap). zram-swap (RAM דחוס, קיים ב-OS חדשים) לא נוגעים בו - הוא לא שוחק
+  כרטיס. נכנס לתוקף מלא בריבוט.
+- **בכוונה אין overlayfs מלא כאן** (בניגוד לקיוסק): ה-Pi חייב state שכותב-ושורד -
+  `/var/lib/shabbat_detector/state_{id}.json` (FSM + חלונות `schedule_windows` שנשמרים fail-closed
+  ל-re-assert אחרי הפסקת-חשמל) ו-`state_fleet_{id}.json` (הגנת-replay של סוכן-הצי). **אלה נשארים
+  על הדיסק** - הם תחת `/var/lib`, לא תחת `/var/log`, ולכן לא מושפעים מ-log2ram/volatile;
+  `configure_sd_wear` גם מזהיר אם `PATH_DISK` של log2ram יכסה אי-פעם את `/var/lib`. גם `logs/`
+  שבתיקיית הפרויקט (לוגי tracker/detector, רוטציה שבועית + גיבוי GitHub) נשארים על הדיסק - הם
+  רשומת-הדיבוג היחידה כש-journald הפך volatile.
+- **החזרה:** `REDUCE_SD_WEAR=false` (או הסרת המפתח) אחרי שהופעל - מחזיר **רק** את מה שאנחנו
+  שינינו, לפי marker `/etc/elevator-reduce-sd-wear.json` (drop-in נמחק, יומן פרסיסטנטי חוזר,
+  log2ram נוטרל, dphys-swapfile מופעל חזרה). noatime נשאר (ברירת המחדל של ה-OS).
+- **שיקול תפעולי:** בלי swap על-הכרטיס, עומס-זיכרון חריג (דפדפן הדשבורד על Pi עם 1GB) עלול
+  להיסגר ע"י ה-OOM killer - במסופון תצוגה-בלבד זה לא רלוונטי; ב-Pi עם דשבורד פתוח קבוע שקלו
+  להשאיר כבוי או לוודא zram. בדיקות: `tests/test_sd_wear.py`.
+
 ## התראות
 - **הוסרו מה-Pi.** ההתראות מנוהלות מרכזית מדשבורד האדמין (סקשן **"🔔 התראות"** לכל
   פרויקט) ונשלחות ע"י Google Apps Script (`admin-dashboard/apps-script`) על בסיס המצב
