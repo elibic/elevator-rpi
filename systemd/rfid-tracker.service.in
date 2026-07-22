@@ -10,11 +10,12 @@ StartLimitIntervalSec=0
 Type=simple
 User={{USER}}
 WorkingDirectory={{PROJECT_DIR}}
-# עריכה/עדכון ידני כ-root עלול להשאיר את הקונפיג בבעלות root (שובר את השירות
-# ב-PermissionError) או את .git בבעלות root (שובר git pull עתידי של {{USER}}).
-# תחילית '+' מריצה chown -R כ-root לכל הריפו לפני ההפעלה, מותנה בקיום setup.sh
-# כבדיקת-שפיות שלא נוגעים בנתיב שגוי. כך הכל מתקן את עצמו בכל start, בלי setup.sh.
-ExecStartPre=+/bin/sh -c '[ -f {{PROJECT_DIR}}/setup.sh ] && chown -R {{USER}}:{{USER}} {{PROJECT_DIR}} 2>/dev/null || true'
+# מוודאים ש-rfid_config.json בבעלות {{USER}} לפני העלייה - אחרת עריכה/עדכון ידני
+# כ-root משאיר אותו root-owned והשירות (רץ כ-{{USER}}) קורס ב-PermissionError.
+# רק הקובץ עצמו (תחילית '+' = כ-root) - לא chown -R על כל הריפו/venv, שלקח כמה
+# שניות על Pi Zero ובהן systemd מדווח 'activating' והדשבורד הבהב אדום בכל עלייה.
+# בעלות .git ל-git pull עתידי מטופלת ב-setup.sh (chown אחרי pull).
+ExecStartPre=+/bin/sh -c '[ -f {{PROJECT_DIR}}/rfid_config.json ] && chown {{USER}}:{{USER}} {{PROJECT_DIR}}/rfid_config.json 2>/dev/null || true'
 # המתנה לקיום פורט הסיריאל (עד 60 שניות) לפני פתיחתו - מחליף את ה-sleep הקבוע,
 # ומונע כשל באתחול כש-fix_cp210x עדיין מאתחל את ה-USB. ממשיכים גם אם לא הופיע,
 # וה-tracker ייכשל-ויחזור (Restart=always) עד שהפורט יהיה זמין.

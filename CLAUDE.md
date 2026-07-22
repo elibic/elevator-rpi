@@ -186,6 +186,13 @@
   כדי שיעלה אמין אחרי ריבוט גם אם ה-USB מאחר. **אסור** להוסיף `After=multi-user.target`
   לאף יחידה עם `WantedBy=multi-user.target` - זה יוצר מעגל-סדר ש-systemd שובר במחיקת job
   (ראה סקשן "אמינות-אתחול", גרסה 1.0.11).
+- **`ExecStartPre` מצומצם לקובץ-הקונפיג בלבד (גרסה 1.1.3):** שתי היחידות (`rfid-tracker` +
+  `shabbat-detector`) עושות `chown {{USER}} rfid_config.json` בלבד בעלייה - **לא** `chown -R`
+  על כל הריפו. ה-`chown -R` הישן נגע ב-venv (אלפי קבצים) ולקח כמה שניות על Pi Zero, ובהן
+  systemd מדווח `activating` והדשבורד צובע אדום בכל בוט/restart (נראה כמו "השירות נופל" - היה
+  false-alarm). הריפוי היחיד שהשירות באמת צריך הוא בעלות הקונפיג (root-owned ⇒ `PermissionError`);
+  בעלות `.git` ל-git pull מטופלת ב-`setup.sh` (chown אחרי pull, כולל בעדכון-צי - `fleet_agent`
+  מגדיר `SUDO_USER=owner`). **אל תחזיר את ה-`-R`.**
 - `version` שמדווח = תוכן קובץ **`VERSION`** בשורש הריפו (semver, למשל `1.0.0`); אם הקובץ חסר -
   fallback לתאריך ה-commit. **שחרור = הקפץ את `VERSION` (`1.0.1`→`1.0.2`) ו-push ל-`main`. זהו.**
   ה-Action `.github/workflows/sync-version.yml` כותב אוטומטית את `VERSION` ל-Firebase
