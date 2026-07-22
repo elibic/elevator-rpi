@@ -192,7 +192,17 @@
   systemd מדווח `activating` והדשבורד צובע אדום בכל בוט/restart (נראה כמו "השירות נופל" - היה
   false-alarm). הריפוי היחיד שהשירות באמת צריך הוא בעלות הקונפיג (root-owned ⇒ `PermissionError`);
   בעלות `.git` ל-git pull מטופלת ב-`setup.sh` (chown אחרי pull, כולל בעדכון-צי - `fleet_agent`
-  מגדיר `SUDO_USER=owner`). **אל תחזיר את ה-`-R`.**
+  מגדיר `SUDO_USER`). **אל תחזיר את ה-`-R`.**
+- **השירותים לעולם לא רצים כ-root (גרסה 1.1.4 - באג קריטי מ-1.1.3):** עדכון-צי רץ כ-root, ו-
+  `fleet_agent._run_update` מעביר `SUDO_USER=_repo_owner()`. אם הריפו כבר root-owned (למשל אחרי
+  עדכון שנעל אותו), זה החזיר `root` → `detect_environment` קבע `user=root` → היחידות נכתבו
+  `User=root` + `chown root:root` על הקונפיג, השירות נשבר (`activating`), ו-`chown -R root` של
+  setup.sh נעל את הריפו על root - **לולאה** (כל עדכון-צי הבא שוב root). התיקון: (1)
+  `detect_environment` נופל ל-`_real_user()` (UID 1000, אחרת בעלים לא-root תחת `/home`) כשמתקבל
+  root, כך שהיחידות תמיד `User=<המשתמש>`; (2) `fleet_agent` מעביר `SUDO_USER`=המשתמש-האמיתי
+  כשהבעלים root/ריק (**דריסה** `env["SUDO_USER"]=`, לא `setdefault`), כדי ש-`chown` של setup.sh
+  יחזיר את הריפו למשתמש. לשבירת נעילה קיימת בשטח: `sudo ./setup.sh` מטרמינל (SUDO_USER=eco)
+  מרנדר נכון ומחזיר הכל ל-eco בריצה אחת.
 - `version` שמדווח = תוכן קובץ **`VERSION`** בשורש הריפו (semver, למשל `1.0.0`); אם הקובץ חסר -
   fallback לתאריך ה-commit. **שחרור = הקפץ את `VERSION` (`1.0.1`→`1.0.2`) ו-push ל-`main`. זהו.**
   ה-Action `.github/workflows/sync-version.yml` כותב אוטומטית את `VERSION` ל-Firebase

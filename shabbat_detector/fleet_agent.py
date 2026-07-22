@@ -92,6 +92,32 @@ _UPDATE_TIMEOUT_S = 1800            # hard cap on a single setup.sh run
 _BOOT_RESCUE_GRACE_S = 120.0        # wait this long after agent start before boot-rescue
 
 
+def _real_user() -> str:
+    """המשתמש האמיתי של ה-Pi (לעולם לא root), ל-SUDO_USER שמועבר ל-setup.sh: UID 1000
+    (המשתמש הראשון ב-RPi OS), אחרת בעלים לא-root תחת /home. משמש כשבעלים-הריפו הוא
+    root (למשל אחרי עדכון-צי קודם שנעל אותו) - אחרת setup.sh היה עושה chown -R root
+    והשירותים נכתבים User=root."""
+    if pwd is None:
+        return ""
+    try:
+        u = pwd.getpwuid(1000)
+        if u.pw_name != "root":
+            return u.pw_name
+    except (KeyError, OSError):
+        pass
+    try:
+        for name in sorted(os.listdir("/home")):
+            try:
+                st = os.stat(os.path.join("/home", name))
+            except OSError:
+                continue
+            if st.st_uid != 0:
+                return pwd.getpwuid(st.st_uid).pw_name
+    except OSError:
+        pass
+    return ""
+
+
 # ── Version detection ─────────────────────────────────────────────────────────
 def _git(repo_dir: str, args: list[str]) -> str:
     try:
@@ -470,9 +496,14 @@ class FleetAgent:
         # setup.sh chowns the repo back to the real user, but only when SUDO_USER
         # is set (it isn't, since we already run as root). Supply the repo owner
         # so the .git chown-back still happens and future `git pull` works.
+        # אם הריפו כבר root-owned (בעלים=root) - זה היה מעביר SUDO_USER=root, וממנו
+        # detect_environment קובע user=root וכותב יחידות User=root. נופלים למשתמש
+        # האמיתי כדי לשבור את הלולאה ולהחזיר את הריפו ל-eco.
         owner = self._repo_owner()
+        if owner in ("", "root"):
+            owner = _real_user()
         if owner:
-            env.setdefault("SUDO_USER", owner)
+            env["SUDO_USER"] = owner
 
         log.info("Running update: %s (cwd=%s)", display, self._repo)
         try:

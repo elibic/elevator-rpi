@@ -78,10 +78,39 @@ class StepResult:
     detail: str = ""
 
 
+def _real_user() -> Optional[str]:
+    """המשתמש האמיתי של ה-Pi (לעולם לא root): UID 1000 (המשתמש הראשון ב-RPi OS),
+    אחרת הבעלים הלא-root הראשון של תיקיית בית תחת /home. משמש כשההרצה היא כ-root
+    בלי SUDO_USER אמיתי (עדכון-צי) - אחרת השירותים היו נכתבים User=root."""
+    try:
+        u = pwd.getpwuid(1000)
+        if u.pw_name != "root":
+            return u.pw_name
+    except (KeyError, OSError):
+        pass
+    try:
+        for name in sorted(os.listdir("/home")):
+            try:
+                st = os.stat(os.path.join("/home", name))
+            except OSError:
+                continue
+            if st.st_uid != 0:
+                return pwd.getpwuid(st.st_uid).pw_name
+    except OSError:
+        pass
+    return None
+
+
 def detect_environment(project_dir: Optional[str] = None) -> Environment:
     """מזהה משתמש-יעד, נתיבים, האם Pi אמיתי, האם הפורט קיים, ומצב git."""
     # המשתמש האמיתי כשרצים תחת sudo; אחרת המשתמש הנוכחי.
     user = os.environ.get("SUDO_USER") or os.environ.get("USER") or pwd.getpwuid(os.getuid()).pw_name
+    # השירותים חייבים לרוץ תחת משתמש שולחן-העבודה - לעולם לא root. עדכון-צי רץ כ-root,
+    # ו-fleet_agent מעביר SUDO_USER=בעלים-של-הריפו; אם הריפו כבר root-owned זה מחזיר
+    # 'root' וכל היחידות היו נכתבות User=root + chown ל-root (רגרסיה + לולאה שנועלת
+    # את הריפו על root לתמיד). כשיצא root - מזהים את המשתמש האמיתי של ה-Pi.
+    if user == "root":
+        user = _real_user() or user
     try:
         home = pwd.getpwnam(user).pw_dir
     except KeyError:
