@@ -25,6 +25,19 @@ IDLE_RESET_SECONDS = 300
 TERMINAL_MISS_TOLERANCE = 1
 
 
+def normalize_floor_waits(raw) -> dict:
+    """FLOOR_WAITS אמור להיות dict {קומה: שניות}. אבל Firebase RTDB ממיר מפתחות
+    שלמים רצופים שמתחילים מ-0 (0,1,2...) ל-**list** [שניות0, שניות1, ...] (האינדקס =
+    הקומה), ומוסיף חורי-null כשהמפתחות דלילים/לא-מ-0. מנרמל תמיד ל-dict {str(קומה): ערך}
+    ומדלג על null. בלי זה, קוד שקורא `.items()` קורס: 'list' object has no attribute 'items'
+    (קומות 0..N שלמות ⇒ RTDB מחזיר list ⇒ קריסת ה-detector בלולאה)."""
+    if isinstance(raw, list):
+        return {str(i): v for i, v in enumerate(raw) if v is not None}
+    if isinstance(raw, dict):
+        return raw
+    return {}
+
+
 # ── Data structures ────────────────────────────────────────────────────────────
 
 @dataclass
@@ -133,7 +146,7 @@ class CycleAnalyzer:
         # Absent FLOOR_WAITS means "unchanged" (mirrors the .get(x, self.x) used
         # for the other fields), so a partial echo can't look like a change.
         if "FLOOR_WAITS" in config:
-            new_waits = {str(k): float(v) for k, v in (config.get("FLOOR_WAITS") or {}).items()}
+            new_waits = {str(k): float(v) for k, v in normalize_floor_waits(config.get("FLOOR_WAITS")).items()}
         else:
             new_waits = self.floor_waits
 

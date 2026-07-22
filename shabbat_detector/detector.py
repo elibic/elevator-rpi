@@ -33,7 +33,7 @@ def _is_valid_floor(s) -> bool:
     return isinstance(s, str) and bool(_FLOOR_RE.match(s))
 
 from .auto_learner import AutoLearner
-from .cycle_analyzer import Cycle, CycleAnalyzer, FloorEvent
+from .cycle_analyzer import Cycle, CycleAnalyzer, FloorEvent, normalize_floor_waits
 from .firebase_client import FirebaseClient
 from .fsm import DetectorState, ElevatorFSM, FSMResult, Violation, _TIME_SCALE
 from .hebcal_gate import HebcalGate
@@ -328,7 +328,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
             top_floor=str(cfg.get("TOP_FLOOR", "12")),
             bottom_floor=str(cfg.get("BOTTOM_FLOOR", "-3")),
             time_per_floor=float(cfg.get("TIME_PER_FLOOR", 26)),
-            floor_waits={str(k): float(v) for k, v in (cfg.get("FLOOR_WAITS") or {}).items()},
+            floor_waits={str(k): float(v) for k, v in normalize_floor_waits(cfg.get("FLOOR_WAITS")).items()},
         )
 
     analyzer = _make_cycle_analyzer(el_config)

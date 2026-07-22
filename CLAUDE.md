@@ -73,6 +73,14 @@
   קריטית עם retry; **בזמן כפייה (`force_on/force_off`) לא נכתב ריצוד-FSM פנימי ל-Firebase**
   (מנע דליפת-ריצוד להתראות ולולאת-הד); reconnect עם backoff+jitter; `_fsm_lock`=RLock
   (בלי deadlock בכיבוי → המצב נשמר).
+- **`FLOOR_WAITS` כ-list מ-Firebase (תיקון 1.1.5):** RTDB ממיר map עם מפתחות שלמים רצופים
+  שמתחילים מ-0 (`{0:..,1:..}`) ל-**list**; קוד ה-detector קרא `.items()` וקרס בלולאה
+  (`AttributeError: 'list' object has no attribute 'items'`) בכל מעלית עם קומות 0..N (למשל
+  ניצה A: `BOTTOM_FLOOR=0`). `normalize_floor_waits` ב-`cycle_analyzer.py` מנרמל list/dict/null→
+  dict (`{str(קומה): ערך}`, אינדקס=קומה, מדלג null), ומשמש **בכל 4 נתיבי-הקריאה**: `detector.
+  _make_cycle_analyzer`, `cycle_analyzer.update_config`, `fsm.expected_cycle_period_from_config`,
+  `fsm._evaluate_cycle`. אבחון-שדה: `AttributeError` ב-journal + `restart counter` עולה. **תופעת-
+  לוואי:** כשה-detector קורס הוא לא מנהל `SHABBAT_ACTIVE` ⇒ המעלית **נתקעת** במצבה האחרון (שבת).
 - **גיבוי-לוגים:** ריפוי-עצמי של הקלון המקומי במקום כשל `non-fast-forward` קבוע (הסיבה
   שלוגי C לא עלו). ראה `log_backup.py`.
 

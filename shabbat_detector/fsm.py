@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Iterable, Optional
 
-from .cycle_analyzer import Cycle
+from .cycle_analyzer import Cycle, normalize_floor_waits
 
 
 # Floor identifiers must be plain integers (or negative integers).
@@ -254,7 +254,7 @@ class ElevatorFSM:
 
         tpass = float(config.get("TIME_PASS_FLOOR", 2.0))
         waits = {str(k).strip(): float(v)
-                 for k, v in (config.get("FLOOR_WAITS") or {}).items()}
+                 for k, v in normalize_floor_waits(config.get("FLOOR_WAITS")).items()}
 
         travel = 2.0 * span * tpass
         dwell_up = sum(waits.get(f, tpf) for f in stops_up)
@@ -380,7 +380,7 @@ class ElevatorFSM:
         stops_up_cfg -= terminals
         stops_dn_cfg -= terminals
         time_per_floor = float(config.get("TIME_PER_FLOOR", 26))
-        floor_waits: dict = {str(k): float(v) for k, v in (config.get("FLOOR_WAITS") or {}).items()}
+        floor_waits: dict = {str(k): float(v) for k, v in normalize_floor_waits(config.get("FLOOR_WAITS")).items()}
 
         observed_up = _filter_int_floors(cycle.up_stops)
         observed_dn = _filter_int_floors(cycle.down_stops)
