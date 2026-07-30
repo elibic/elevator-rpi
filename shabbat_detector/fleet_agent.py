@@ -13,12 +13,14 @@ Data model (must stay in sync with the dashboard)
       PATCH /fleet/{ELEVATOR_ID}
           { "version": "<YYYY.MM.DD>", "commit": "<short-sha>",
             "last_seen": <epoch>, "status": "online", "secret_key": "<…>",
+            "temp_c": 48.3,
             "services": { "rfid-tracker": "active", "shabbat-detector": "active",
                           "fleet-agent": "active", "elevator-config-web": "active" } }
 
   The dashboard marks a Pi *offline* when ``now - last_seen > 660`` and *behind*
-  when ``version !== LATEST_VERSION`` (a ``YYYY.MM.DD`` string it holds), and
-  shows a colored badge per entry in ``services``.
+  when ``version !== LATEST_VERSION`` (a ``YYYY.MM.DD`` string it holds), shows a
+  colored badge per entry in ``services``, and shows ``temp_c`` (CPU temperature
+  in °C, ``null`` when the sensor is unreadable) as a color-coded chip.
 
 * **Command** — the dashboard writes one of::
 
@@ -62,6 +64,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -196,6 +199,42 @@ def _collect_services() -> dict:
     return {svc: _service_status(svc) for svc in _FLEET_SERVICES}
 
 
+# ── CPU temperature (dashboard shows it per elevator) ─────────────────────────
+_THERMAL_ZONE = "/sys/class/thermal/thermal_zone0/temp"
+
+
+def read_cpu_temp() -> Optional[float]:
+    """טמפ' ה-CPU של ה-Pi במעלות צלזיוס, או ``None`` כשאי-אפשר לקרוא.
+
+    המקור הזול הוא ``/sys/class/thermal/thermal_zone0/temp`` (מילי-מעלות, קריאת
+    קובץ בלבד - בלי תהליך חדש כל heartbeat); ``vcgencmd measure_temp`` הוא
+    fallback ל-OS שבו ה-sysfs חסר. במחשב פיתוח (Windows/מק) שניהם נכשלים ואנחנו
+    מחזירים ``None`` - ה-heartbeat ממשיך כרגיל בלי השדה.
+    """
+    try:
+        with open(_THERMAL_ZONE, encoding="utf-8") as f:
+            milli = float(f.read().strip())
+        # שפיות: הקרנל מדווח מילי-מעלות (למשל 48312). ערך מחוץ לטווח סביר
+        # (0-150C) הוא כנראה יחידה אחרת - עדיף לא לדווח מאשר לדווח שטות.
+        if 0 < milli / 1000.0 < 150:
+            return round(milli / 1000.0, 1)
+    except Exception:
+        pass
+    if shutil.which("vcgencmd"):
+        try:
+            out = subprocess.run(
+                ["vcgencmd", "measure_temp"], capture_output=True, text=True, timeout=5,
+            ).stdout
+            m = re.search(r"([\d.]+)", out or "")     # "temp=48.3'C"
+            if m:
+                t = float(m.group(1))
+                if 0 < t < 150:
+                    return round(t, 1)
+        except Exception:
+            pass
+    return None
+
+
 def _never_started_since_boot(svc: str) -> bool:
     """True when an *enabled* unit never even began activating since this boot.
 
@@ -311,6 +350,9 @@ class FleetAgent:
             "last_seen": int(time.time()),
             "status": status,
             "services": _collect_services(),
+            # טמפ' ה-CPU. ``None`` (⇒ null ב-PATCH) **מוחק** את המפתח בכוונה, כדי
+            # שערך ישן לא ייראה חי בדשבורד כשהחיישן הפסיק להיקרא.
+            "temp_c": read_cpu_temp(),
             **extra,
         }
         if self._test_mode:

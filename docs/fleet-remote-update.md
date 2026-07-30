@@ -40,6 +40,7 @@
 | `commit` | Pi | `git rev-parse --short HEAD` — לזיהוי מדויק (הדשבורד מתעלם). |
 | `last_seen` | Pi | epoch (שניות) של ה-heartbeat האחרון. הדשבורד = **offline** אם `now - last_seen > 660`. |
 | `status` | Pi | `"online"` (אינפורמטיבי). |
+| `temp_c` | Pi | טמפ' המעבד ב-°C (מספר, דיוק 0.1) בכל heartbeat. `null` = החיישן לא נקרא. הדשבורד מציג צ'יפ צבעוני (ירוק &lt;65 · צהוב 65-79 · אדום 80+ = throttling). |
 | `update_status` | Pi | תוצאת העדכון האחרון: `updating` → `ok` / `failed: <reason>` / `rejected: bad secret_key`. |
 | `secret_key` | שניהם | נלווה לכל כתיבה (מודל bearer-token; ראו אבטחה). הדשבורד **מסנן** מפתח זה בתצוגה. |
 | `command` | דשבורד | `{ action:"update", secret_key, requested_at }`. הסוכן **מוחק** אותו אחרי ביצוע. |
@@ -217,6 +218,21 @@
 ה-heartbeat כולל כעת `services` (מצב 4 שירותי ה-systemd לפי `systemctl is-active`):
 `rfid-tracker`, `shabbat-detector`, `fleet-agent`, `elevator-config-web`. הדשבורד מציג תווית-צבע
 לכל אחד בכרטיס המעלית. השדה נכתב באותו PATCH שנושא `secret_key`, אז חוקי-ה-RTDB על `/fleet` חלים כרגיל.
+
+## טמפרטורת המעבד בדשבורד
+
+אותו heartbeat נושא גם `temp_c` - טמפ' ה-CPU של ה-Pi. הקריאה היא מ-
+`/sys/class/thermal/thermal_zone0/temp` (מילי-מעלות; קריאת-קובץ בלבד, בלי תהליך חדש כל
+heartbeat), עם fallback ל-`vcgencmd measure_temp` אם ה-sysfs חסר. הרזולוציה בפועל היא
+`FLEET_REPORT_INTERVAL` (ברירת-מחדל 5 דק').
+
+כשהחיישן לא נקרא (מחשב פיתוח, OS חריג) נכתב `null` **בכוונה** - כך ערך ישן לא ממשיך
+להיראות חי בדשבורד, והצ'יפ פשוט נעלם. Pi בגרסה ישנה מ-1.1.6 לא מדווח את השדה כלל, ולכן
+גם אצלו הצ'יפ לא מוצג (בלי שגיאה).
+
+ספי הצבע בדשבורד נגזרים מה-throttling של רספברי-פיי: מתחת ל-65°C תקין (ירוק), 65-79°C חם
+(צהוב), 80°C ומעלה הקרנל מתחיל להאט את המעבד ו-85°C האטה קשה (אדום). Pi Zero/4 במארז סגור
+בלוח-חשמל מגיע בקלות ל-70°C+ בקיץ - שם הצ'יפ הצהוב הוא הרמז לאוורור.
 
 ---
 

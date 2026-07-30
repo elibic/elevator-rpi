@@ -49,7 +49,8 @@
   **`SHABBAT_SCHEDULE_BEFORE_MINUTES`/`SHABBAT_SCHEDULE_AFTER_MINUTES`** (אופסטים מדויקים
   למצב לוח-זמנים; נפרדים מחלונות השער הרחבים), `GEO_NAME_ID`.
 - **`elevators/{id}`**: קומה חיה (tracker). **`fleet/{id}`**: version/last_seen/command (עדכון מרחוק) +
-  **`services`** (מצב 4 שירותי systemd, מוצג בדשבורד) + **`backup_status`** (גיבוי-לוגים).
+  **`services`** (מצב 4 שירותי systemd, מוצג בדשבורד) + **`backup_status`** (גיבוי-לוגים) +
+  **`temp_c`** (טמפ' המעבד, מוצגת בדשבורד).
 - `FIREBASE_URL` בקונפיג: detector+monitor מנרמלים ל-**root** של ה-DB (urlsplit), עם/בלי `.json`.
 - FSM: `NORMAL → CANDIDATE_SHABBAT → SHABBAT (→ CANDIDATE_EXIT)`. `SHABBAT_ACTIVE` נדלק רק עם
   מחזורים תואמים רצופים **ובחלון hebcal** - או `SHABBAT_OVERRIDE=force_on`.
@@ -161,6 +162,17 @@
 - **שיקול תפעולי:** בלי swap על-הכרטיס, עומס-זיכרון חריג (דפדפן הדשבורד על Pi עם 1GB) עלול
   להיסגר ע"י ה-OOM killer - במסופון תצוגה-בלבד זה לא רלוונטי; ב-Pi עם דשבורד פתוח קבוע שקלו
   להשאיר כבוי או לוודא zram. בדיקות: `tests/test_sd_wear.py`.
+
+## 🌡️ טמפרטורת המעבד בדשבורד הצי (גרסה 1.1.6)
+- **מה:** ה-heartbeat של `fleet_agent` נושא עכשיו `temp_c` - טמפ' ה-CPU של ה-Pi (°C, דיוק 0.1),
+  ובדשבורד האדמין מופיע צ'יפ צבעוני בשורת כל מעלית ליד הקומה.
+- **קריאה:** `read_cpu_temp()` קורא את `/sys/class/thermal/thermal_zone0/temp` (מילי-מעלות -
+  קריאת-קובץ בלבד, בלי תהליך חדש בכל heartbeat), עם fallback ל-`vcgencmd measure_temp`.
+  ערך מחוץ לטווח 0-150°C נדחה. הרזולוציה בפועל = `FLEET_REPORT_INTERVAL` (ברירת-מחדל 5 דק').
+- **`null` במכוון כשאין קריאה:** ה-PATCH שולח `temp_c=null` ⇒ המפתח **נמחק** ב-RTDB, כדי שערך
+  ישן לא ייראה חי בדשבורד (ה-`last_seen` ממשיך להתעדכן). Pi ישן מ-1.1.6 לא מדווח ⇒ הצ'יפ נעלם לבד.
+- **ספי-הצבע (בדשבורד):** &lt;65°C ירוק · 65-79°C צהוב · 80°C+ אדום - לפי ה-throttling של רספברי-פיי
+  (האטה רכה ב-80°C, קשה ב-85°C). ראה `docs/fleet-remote-update.md`.
 
 ## התראות
 - **הוסרו מה-Pi.** ההתראות מנוהלות מרכזית מדשבורד האדמין (סקשן **"🔔 התראות"** לכל
