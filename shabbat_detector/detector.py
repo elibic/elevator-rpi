@@ -884,6 +884,25 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                     source = resolve_source(el_config, settings)
                     _apply_result(vresult, fsm, fb, prev_fsm_state, test_mode, override, source)
 
+            # ── Direction reversal away from a terminal ───────────────────────
+            # A Shabbat sweep is monotonic between the terminals, so reversing
+            # mid-building is passenger control.  Recorded on every event and
+            # judged only once the halachic window has closed (see
+            # fsm.check_post_window_exit); the turnarounds at TOP/BOTTOM are
+            # legitimate and excluded.  This runs on the already deduplicated,
+            # flap-suppressed stream, so reader oscillation is not counted.
+            if prev_event is not None and prev_prev is not None:
+                try:
+                    a, b, c = int(prev_prev.floor), int(prev_event.floor), int(floor)
+                    terminals = {
+                        str(el_config.get("TOP_FLOOR", "")).strip(),
+                        str(el_config.get("BOTTOM_FLOOR", "")).strip(),
+                    }
+                    if (b - a) * (c - b) < 0 and prev_event.floor not in terminals:
+                        fsm.record_reversal(now)
+                except (TypeError, ValueError):
+                    pass
+
             # ── Feed to cycle analyzer ────────────────────────────────────────────
             ar = analyzer.push_event(event)
 

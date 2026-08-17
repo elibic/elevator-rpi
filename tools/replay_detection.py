@@ -254,6 +254,18 @@ def replay(
                 record(fsm.state, fsm.process_violation(v, cfg, now, hebcal_ok), now,
                        f"illegal-stop F{prev_event.floor}")
 
+        if prev_event is not None and prev_prev is not None:
+            try:
+                a, b, c = int(prev_prev.floor), int(prev_event.floor), int(floor)
+                terminals = {
+                    str(cfg.get("TOP_FLOOR", "")).strip(),
+                    str(cfg.get("BOTTOM_FLOOR", "")).strip(),
+                }
+                if (b - a) * (c - b) < 0 and prev_event.floor not in terminals:
+                    fsm.record_reversal(now)
+            except (TypeError, ValueError):
+                pass
+
         ar = analyzer.push_event(event)
         prev_state = fsm.state
         if ar.cycle_just_started:

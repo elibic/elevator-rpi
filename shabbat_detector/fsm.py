@@ -165,11 +165,21 @@ class ElevatorFSM:
         # violation-based paths are structurally dead - Ramada B and C).
         "POST_WINDOW_EXIT_ENABLED":      True,
         # Grace past the end of the Hebcal window before this check may fire.
-        "POST_WINDOW_GRACE_MIN":         15,
-        # ...and require this many * the config-implied cycle period since the
-        # last matching cycle, so we never exit while sweeps are visibly
-        # continuing.  2.5 tolerates one completely dropped cycle measurement.
+        "POST_WINDOW_GRACE_MIN":         5,
+        # Backstop path - require this many * the config-implied cycle period
+        # since the last matching cycle, so we never exit while sweeps are
+        # visibly continuing.  2.5 tolerates one dropped cycle measurement.
+        # This is the path that works when the car is *quiet*: a parked elevator
+        # produces no movement to judge, only the absence of sweeps.
         "POST_WINDOW_CYCLE_FACTOR":      2.5,
+        # Fast path - direction reversals away from a terminal.  A Shabbat sweep
+        # is monotonic between the terminals, so a car that goes up, back down
+        # and up again is plainly running under passenger control.  Measured
+        # over three Shabbatot x three elevators: at most 4 reversals in any
+        # 10-minute window during genuine Shabbat operation (RFID apex misreads),
+        # against 6 within 3-8 minutes of the program stopping.  0 disables.
+        "POST_WINDOW_REVERSALS_FOR_EXIT": 6,
+        "POST_WINDOW_REVERSAL_WINDOW_MIN": 10,
     }
 
     # Cooldown between state transitions (prevents rapid flapping)
@@ -206,6 +216,10 @@ class ElevatorFSM:
         # the window.  Persisted so a restart during motzaei-Shabbat does not
         # silently restart the grace clock more than once.
         self._left_window_at: Optional[float] = None
+
+        # Timestamps of recent direction reversals away from a terminal, fed by
+        # the detector's event loop.  Pruned to POST_WINDOW_REVERSAL_WINDOW_MIN.
+        self._reversals: list[float] = []
 
         # Tunables — initialised from DEFAULTS, overridden by update_settings().
         self._tunables: dict = dict(self.DEFAULTS)
@@ -352,6 +366,18 @@ class ElevatorFSM:
         self._add_violation(violation, now)
         return self._maybe_exit(now, hebcal_in_window)
 
+    def record_reversal(self, now: float) -> None:
+        """Note a direction reversal away from a terminal (detector-detected).
+
+        A Shabbat sweep runs monotonically between the two terminals, so a
+        reversal in the middle of the building is passenger control - "up to 10,
+        wait, down to 7, back up to 9" cannot be a sweep.  Recorded always and
+        judged only after the halachic window closes.
+        """
+        window_s = float(self._tunables["POST_WINDOW_REVERSAL_WINDOW_MIN"]) * 60 * _TIME_SCALE
+        self._reversals.append(now)
+        self._reversals = [t for t in self._reversals if now - t <= window_s][-64:]
+
     def check_post_window_exit(
         self,
         now: float,
@@ -396,6 +422,25 @@ class ElevatorFSM:
         if now - self._left_window_at < grace_s:
             return None
 
+        since_window = (now - self._left_window_at) / 60
+
+        # Fast path - positive evidence of passenger control right now.  Catches
+        # a busy motzaei-Shabbat within minutes, and unlike the cadence path it
+        # does not depend on the cycle machinery measuring anything correctly.
+        rev_needed = int(self._tunables["POST_WINDOW_REVERSALS_FOR_EXIT"])
+        rev_window_min = float(self._tunables["POST_WINDOW_REVERSAL_WINDOW_MIN"])
+        rev_window_s = rev_window_min * 60 * _TIME_SCALE
+        recent_reversals = [t for t in self._reversals if now - t <= rev_window_s]
+        if rev_needed > 0 and len(recent_reversals) >= rev_needed:
+            return self._exit_post_window(now, (
+                "יציאה ממצב שבת - חלון השבת ההלכתי הסתיים לפני "
+                f"{since_window:.0f} דק', והמעלית נוסעת כמו ביום חול: "
+                f"{len(recent_reversals)} שינויי-כיוון באמצע הבניין "
+                f"ב-{rev_window_min:.0f} הדקות האחרונות"
+            ))
+
+        # Backstop path - the sweeps simply stopped arriving.  This is the one
+        # that still works when the car is quiet and produces no movement.
         period = self._expected_cycle_period or self.expected_cycle_period_from_config(config)
         if period <= 0:
             return None   # cannot reason about cadence without a period
@@ -410,12 +455,16 @@ class ElevatorFSM:
 
         reason = (
             "יציאה ממצב שבת - חלון השבת ההלכתי הסתיים לפני "
-            f"{(now - self._left_window_at) / 60:.0f} דק' "
+            f"{since_window:.0f} דק' "
             f"ולא זוהה מחזור-שבת תקין מזה {since_match / 60:.0f} דק' "
             f"({since_match / period:.1f}x מזמן-המחזור הצפוי)"
         )
+        return self._exit_post_window(now, reason)
+
+    def _exit_post_window(self, now: float, reason: str) -> FSMResult:
         self._violations.clear()
         self._consecutive_nonmatch = 0
+        self._reversals.clear()
         return self._transition_to(DetectorState.NORMAL, now, FSMResult(
             new_state=DetectorState.NORMAL,
             shabbat_active=False,
@@ -466,6 +515,7 @@ class ElevatorFSM:
             "consecutive_nonmatch": self._consecutive_nonmatch,
             "expected_cycle_period": self._expected_cycle_period,
             "left_window_at": self._left_window_at,
+            "reversals": list(self._reversals),
             "violations": [
                 {"ts": v.ts, "floor": v.floor, "reason": v.reason}
                 for v in self._violations
@@ -491,6 +541,7 @@ class ElevatorFSM:
         fsm._left_window_at = d.get("left_window_at")
         if fsm._left_window_at is not None:
             fsm._left_window_at = float(fsm._left_window_at)
+        fsm._reversals = [float(t) for t in (d.get("reversals") or [])]
         fsm._violations = [
             Violation(ts=float(v["ts"]), floor=str(v["floor"]), reason=str(v["reason"]))
             for v in d.get("violations", [])

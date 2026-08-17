@@ -83,7 +83,7 @@ class TestPostWindowExit:
 
         now += HOUR                       # window closes; grace clock starts
         assert fsm.check_post_window_exit(now, False, CONFIG_B) is None
-        now += 14 * 60                    # still inside the 15-minute grace
+        now += 4 * 60                     # still inside the 5-minute grace
         assert fsm.check_post_window_exit(now, False, CONFIG_B) is None
 
         now += 2 * 60                     # grace elapsed, no cycle since entry
@@ -140,7 +140,7 @@ class TestPostWindowExit:
         # The grace restarts from scratch rather than resuming mid-count.
         now += 300
         fsm.check_post_window_exit(now, False, CONFIG_B)
-        assert fsm.check_post_window_exit(now + 14 * 60, False, CONFIG_B) is None
+        assert fsm.check_post_window_exit(now + 4 * 60, False, CONFIG_B) is None
 
     def test_hebcal_outage_cannot_cause_an_exit(self):
         """HebcalGate is fail-open: unreachable Hebcal reports 'in window'."""
@@ -247,3 +247,65 @@ class TestEveryFloorConfigHasNoIllegalStops:
                  | {CONFIG_B["TOP_FLOOR"], CONFIG_B["BOTTOM_FLOOR"]})
         every_floor = {str(f) for f in range(-3, 13)}
         assert every_floor <= valid, "a floor outside the stop-set would be catchable"
+
+
+class TestReversalFastPath:
+    """The user-proposed sensor: "up to 10, wait, down to 7, back up to 9" is
+    plainly not a sweep.  Measured ceiling during genuine Shabbat operation is
+    4 reversals per 10 minutes (RFID apex misreads), so the threshold is 6."""
+
+    def test_reversals_trigger_exit_after_the_window(self):
+        fsm = make_fsm()
+        now = 1000.0 + HOUR
+        fsm.check_post_window_exit(now, False, CONFIG_B)   # arm the grace
+        now += 6 * 60                                      # grace elapsed
+        fsm._last_clean_cycle_ts = now   # keep the cadence backstop un-due, so
+                                         # only the reversal path can fire here
+        for i in range(5):
+            fsm.record_reversal(now + i)
+        assert fsm.check_post_window_exit(now + 5, False, CONFIG_B) is None
+        fsm.record_reversal(now + 6)                       # the 6th
+        result = fsm.check_post_window_exit(now + 7, False, CONFIG_B)
+        assert result is not None
+        assert result.shabbat_active is False
+        assert "שינויי-כיוון" in result.reason_he
+
+    def test_reversals_are_ignored_inside_the_window(self):
+        fsm = make_fsm()
+        now = 1000.0
+        for i in range(40):
+            fsm.record_reversal(now + i)
+        assert fsm.check_post_window_exit(now + 41, True, CONFIG_B) is None
+        assert fsm.state == DetectorState.SHABBAT
+
+    def test_old_reversals_age_out(self):
+        fsm = make_fsm()
+        now = 1000.0 + HOUR
+        fsm.check_post_window_exit(now, False, CONFIG_B)
+        now += 6 * 60
+        for i in range(5):
+            fsm.record_reversal(now + i)
+        now += 11 * 60                                     # past the 10-min window
+        fsm._last_clean_cycle_ts = now
+        fsm.record_reversal(now)
+        assert fsm.check_post_window_exit(now + 1, False, CONFIG_B) is None
+
+    def test_disabled_by_tunable(self):
+        settings = {"SHABBAT_DETECTION": dict(SETTINGS["SHABBAT_DETECTION"],
+                                              POST_WINDOW_REVERSALS_FOR_EXIT=0)}
+        fsm = make_fsm(settings)
+        now = 1000.0 + HOUR
+        fsm.check_post_window_exit(now, False, CONFIG_B)
+        now += 6 * 60
+        for i in range(30):
+            fsm.record_reversal(now + i)
+        # falls through to the cadence backstop, which is not yet due here
+        fsm._last_clean_cycle_ts = now
+        assert fsm.check_post_window_exit(now + 31, False, CONFIG_B) is None
+
+    def test_survives_a_restart(self):
+        fsm = make_fsm()
+        fsm.record_reversal(1000.0)
+        fsm.record_reversal(1001.0)
+        restored = ElevatorFSM.from_dict("B", fsm.to_dict())
+        assert restored._reversals == [1000.0, 1001.0]
