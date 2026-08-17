@@ -61,7 +61,7 @@ if [[ "${ELEVATOR_SETUP_REEXEC:-0}" != "1" ]]; then
     fi
     AFTER="$(git -C "$DIR" rev-parse HEAD 2>/dev/null || echo none)"
     if [[ "$BEFORE" != "$AFTER" ]]; then
-      echo "הקוד עודכן — מריץ מחדש את ההתקנה…"
+      echo "הקוד עודכן - מריץ מחדש את ההתקנה…"
       exec env ELEVATOR_SETUP_REEXEC=1 bash "$DIR/setup.sh" ${BRANCH:+--branch "$BRANCH"} ${PY_ARGS[@]+"${PY_ARGS[@]}"}
     fi
   fi

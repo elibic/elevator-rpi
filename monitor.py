@@ -87,7 +87,7 @@ def render(status: dict, elevator_id: str) -> None:
     settings = status.get("settings", {})
     sd = cfg.get("SHABBAT_DETECTOR") or {}
 
-    print(f"{BOLD}═══════ Shabbat Detector — מעלית {elevator_id} ═══════{RESET}")
+    print(f"{BOLD}═══════ Shabbat Detector - מעלית {elevator_id} ═══════{RESET}")
     print(f"   זמן:                 {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print()
 
@@ -98,7 +98,7 @@ def render(status: dict, elevator_id: str) -> None:
     sa_txt = f"{GREEN}true{RESET}" if sa else f"{DIM}false{RESET}"
     print(f"   SHABBAT_ACTIVE:      {sa_txt}")
 
-    last_reason = sd.get("last_transition_reason", "—")
+    last_reason = sd.get("last_transition_reason", "-")
     print(f"   סיבת המעבר האחרון:   {last_reason}")
     last_ts = sd.get("last_transition_ts")
     if last_ts:
@@ -231,15 +231,15 @@ def render(status: dict, elevator_id: str) -> None:
     # --- Diagnostic hints ---
     hints = []
     if changed_at and (time.time() - changed_at) > 600:
-        hints.append("המעלית לא דיווחה על אירועים זה 10+ דקות — בדוק שה-RFID tracker רץ")
+        hints.append("המעלית לא דיווחה על אירועים זה 10+ דקות - בדוק שה-RFID tracker רץ")
     if not cfg.get("STOPPING_FLOORS_UP"):
-        hints.append("STOPPING_FLOORS_UP ריק — הdetector לא יוכל לזהות שבת")
+        hints.append("STOPPING_FLOORS_UP ריק - הdetector לא יוכל לזהות שבת")
     if not cfg.get("STOPPING_FLOORS_DOWN"):
-        hints.append("STOPPING_FLOORS_DOWN ריק — הdetector לא יוכל לזהות שבת")
+        hints.append("STOPPING_FLOORS_DOWN ריק - הdetector לא יוכל לזהות שבת")
     if state == "CANDIDATE_SHABBAT" and lcs and not lcs.get("matched"):
-        hints.append(f"מחזור אחרון לא תאם — בדוק את לרוחב 'last_cycle_summary' למעלה")
+        hints.append(f"מחזור אחרון לא תאם - בדוק את לרוחב 'last_cycle_summary' למעלה")
     if state == "NORMAL" and sa:
-        hints.append("בעיה: FSM=NORMAL אבל SHABBAT_ACTIVE=true — אי-עקביות")
+        hints.append("בעיה: FSM=NORMAL אבל SHABBAT_ACTIVE=true - אי-עקביות")
     if hints:
         print(f"   {YELLOW}{BOLD}⚠  אבחון:{RESET}")
         for h in hints:

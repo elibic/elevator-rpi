@@ -123,7 +123,7 @@ def api_install_start():
             )
             ok = all(r.ok for r in results)
             for r in results:
-                progress(f"{r.name}: {'OK' if r.ok else 'נכשל — ' + r.detail}",
+                progress(f"{r.name}: {'OK' if r.ok else 'נכשל - ' + r.detail}",
                          "ok" if r.ok else "error")
             progress("ההתקנה הסתיימה" + (" בהצלחה ✓" if ok else " עם שגיאות"),
                      "done" if ok else "error")
