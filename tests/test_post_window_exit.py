@@ -358,3 +358,20 @@ class TestHardTimeDeadline:
 
     def test_default_is_off(self):
         assert ElevatorFSM.DEFAULTS["POST_WINDOW_HARD_EXIT_MIN"] == 0
+
+
+class TestCycleFactorZeroDisables:
+    """0 must disable the quiet-car backstop, matching the page-wide '0 = off'
+    convention - not turn its threshold into 'exit immediately after grace'."""
+
+    def test_zero_disables_the_backstop(self):
+        settings = {"SHABBAT_DETECTION": dict(SETTINGS["SHABBAT_DETECTION"],
+                                              POST_WINDOW_CYCLE_FACTOR=0,
+                                              POST_WINDOW_ANOMALIES_FOR_EXIT=0)}
+        fsm = make_fsm(settings)
+        now = 1000.0 + HOUR
+        fsm.check_post_window_exit(now, False, CONFIG_B)      # arm the grace
+        # Hours past the grace with no sweeps at all - still no exit, because
+        # both post-window paths are explicitly disabled.
+        assert fsm.check_post_window_exit(now + 5 * HOUR, False, CONFIG_B) is None
+        assert fsm.state == DetectorState.SHABBAT

@@ -484,7 +484,13 @@ class ElevatorFSM:
         if period <= 0:
             return None   # cannot reason about cadence without a period
 
-        factor = float(self._tunables["POST_WINDOW_CYCLE_FACTOR"])
+        factor = float(self._tunables["POST_WINDOW_CYCLE_FACTOR"] or 0)
+        if factor <= 0:
+            # 0 disables, like every other tunable on the settings page.
+            # Without this, factor=0 made the threshold 0 seconds and fired
+            # the backstop immediately after the grace - the exact opposite
+            # of what a user typing 0 means.
+            return None
         anchor = self._last_clean_cycle_ts or self._shabbat_entered_at or self._entered_state_at
         if not anchor:
             return None
