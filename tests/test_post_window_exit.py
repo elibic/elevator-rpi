@@ -261,10 +261,10 @@ class TestReversalFastPath:
         now += 6 * 60                                      # grace elapsed
         fsm._last_clean_cycle_ts = now   # keep the cadence backstop un-due, so
                                          # only the reversal path can fire here
-        for i in range(5):
-            fsm.record_reversal(now + i)
-        assert fsm.check_post_window_exit(now + 5, False, CONFIG_B) is None
-        fsm.record_reversal(now + 6)                       # the 6th
+        for i in range(8):
+            fsm.record_weekday_evidence(now + i, "reversal")
+        assert fsm.check_post_window_exit(now + 8, False, CONFIG_B) is None
+        fsm.record_weekday_evidence(now + 9, "short_stop")     # the 9th, pooled
         result = fsm.check_post_window_exit(now + 7, False, CONFIG_B)
         assert result is not None
         assert result.shabbat_active is False
@@ -274,7 +274,7 @@ class TestReversalFastPath:
         fsm = make_fsm()
         now = 1000.0
         for i in range(40):
-            fsm.record_reversal(now + i)
+            fsm.record_weekday_evidence(now + i, "reversal")
         assert fsm.check_post_window_exit(now + 41, True, CONFIG_B) is None
         assert fsm.state == DetectorState.SHABBAT
 
@@ -284,28 +284,28 @@ class TestReversalFastPath:
         fsm.check_post_window_exit(now, False, CONFIG_B)
         now += 6 * 60
         for i in range(5):
-            fsm.record_reversal(now + i)
+            fsm.record_weekday_evidence(now + i, "reversal")
         now += 11 * 60                                     # past the 10-min window
         fsm._last_clean_cycle_ts = now
-        fsm.record_reversal(now)
+        fsm.record_weekday_evidence(now, "reversal")
         assert fsm.check_post_window_exit(now + 1, False, CONFIG_B) is None
 
     def test_disabled_by_tunable(self):
         settings = {"SHABBAT_DETECTION": dict(SETTINGS["SHABBAT_DETECTION"],
-                                              POST_WINDOW_REVERSALS_FOR_EXIT=0)}
+                                              POST_WINDOW_ANOMALIES_FOR_EXIT=0)}
         fsm = make_fsm(settings)
         now = 1000.0 + HOUR
         fsm.check_post_window_exit(now, False, CONFIG_B)
         now += 6 * 60
         for i in range(30):
-            fsm.record_reversal(now + i)
+            fsm.record_weekday_evidence(now + i, "reversal")
         # falls through to the cadence backstop, which is not yet due here
         fsm._last_clean_cycle_ts = now
         assert fsm.check_post_window_exit(now + 31, False, CONFIG_B) is None
 
     def test_survives_a_restart(self):
         fsm = make_fsm()
-        fsm.record_reversal(1000.0)
-        fsm.record_reversal(1001.0)
+        fsm.record_weekday_evidence(1000.0, "reversal")
+        fsm.record_weekday_evidence(1001.0, "reversal")
         restored = ElevatorFSM.from_dict("B", fsm.to_dict())
-        assert restored._reversals == [1000.0, 1001.0]
+        assert restored._weekday_evidence == [(1000.0, "reversal"), (1001.0, "reversal")]

@@ -255,14 +255,27 @@ def replay(
                        f"illegal-stop F{prev_event.floor}")
 
         if prev_event is not None and prev_prev is not None:
+            # Mirrors the weekday-evidence block in detector's event loop.
             try:
                 a, b, c = int(prev_prev.floor), int(prev_event.floor), int(floor)
                 terminals = {
                     str(cfg.get("TOP_FLOOR", "")).strip(),
                     str(cfg.get("BOTTOM_FLOOR", "")).strip(),
                 }
-                if (b - a) * (c - b) < 0 and prev_event.floor not in terminals:
-                    fsm.record_reversal(now)
+                if prev_event.floor not in terminals:
+                    if (b - a) * (c - b) < 0:
+                        fsm.record_weekday_evidence(now, "reversal")
+                    else:
+                        wanted = cfg.get(
+                            "STOPPING_FLOORS_UP" if c > b else "STOPPING_FLOORS_DOWN"
+                        ) or []
+                        if prev_event.floor in {str(f).strip() for f in wanted}:
+                            waits = normalize_floor_waits(cfg.get("FLOOR_WAITS"))
+                            expected = float(waits.get(
+                                prev_event.floor, cfg.get("TIME_PER_FLOOR", 26)))
+                            ratio = float(fsm.tunables["POST_WINDOW_SHORT_STOP_RATIO"])
+                            if (now - prev_event.timestamp) < expected * ratio:
+                                fsm.record_weekday_evidence(now, "short_stop")
             except (TypeError, ValueError):
                 pass
 

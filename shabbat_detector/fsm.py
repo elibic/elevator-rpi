@@ -172,14 +172,24 @@ class ElevatorFSM:
         # This is the path that works when the car is *quiet*: a parked elevator
         # produces no movement to judge, only the absence of sweeps.
         "POST_WINDOW_CYCLE_FACTOR":      2.5,
-        # Fast path - direction reversals away from a terminal.  A Shabbat sweep
-        # is monotonic between the terminals, so a car that goes up, back down
-        # and up again is plainly running under passenger control.  Measured
-        # over three Shabbatot x three elevators: at most 4 reversals in any
-        # 10-minute window during genuine Shabbat operation (RFID apex misreads),
-        # against 6 within 3-8 minutes of the program stopping.  0 disables.
-        "POST_WINDOW_REVERSALS_FOR_EXIT": 6,
-        "POST_WINDOW_REVERSAL_WINDOW_MIN": 10,
+        # Fast path - live evidence that the car is under passenger control.
+        # Two independent tells, pooled into one counter (see record_weekday_
+        # evidence): a direction reversal away from a terminal (a Shabbat sweep
+        # is monotonic between them), and a stop far shorter than the configured
+        # dwell *at a floor the program is supposed to dwell on*.
+        #
+        # Calibrated on recorded logs, three Shabbatot x three elevators, as the
+        # peak count in any 10-minute window during genuine Shabbat operation:
+        #   reversals alone   peak 4 -> threshold 6, worst-case exit 43 min
+        #   short stops alone peak 6 -> threshold 9, worst-case exit 15 min
+        #   both pooled       peak 6 -> threshold 9, worst-case exit  8 min
+        # Pooling wins because the two tells need different traffic to show up,
+        # while their noise floors do not add.  0 disables the fast path.
+        "POST_WINDOW_ANOMALIES_FOR_EXIT": 9,
+        "POST_WINDOW_ANOMALY_WINDOW_MIN": 10,
+        # A stop counts as "too short" below this fraction of the configured
+        # dwell (FLOOR_WAITS for the floor, else TIME_PER_FLOOR).
+        "POST_WINDOW_SHORT_STOP_RATIO":  0.5,
     }
 
     # Cooldown between state transitions (prevents rapid flapping)
@@ -217,9 +227,9 @@ class ElevatorFSM:
         # silently restart the grace clock more than once.
         self._left_window_at: Optional[float] = None
 
-        # Timestamps of recent direction reversals away from a terminal, fed by
-        # the detector's event loop.  Pruned to POST_WINDOW_REVERSAL_WINDOW_MIN.
-        self._reversals: list[float] = []
+        # Recent (timestamp, kind) evidence of weekday driving, fed live by the
+        # detector's event loop.  Pruned to POST_WINDOW_ANOMALY_WINDOW_MIN.
+        self._weekday_evidence: list[tuple[float, str]] = []
 
         # Tunables — initialised from DEFAULTS, overridden by update_settings().
         self._tunables: dict = dict(self.DEFAULTS)
@@ -366,17 +376,22 @@ class ElevatorFSM:
         self._add_violation(violation, now)
         return self._maybe_exit(now, hebcal_in_window)
 
-    def record_reversal(self, now: float) -> None:
-        """Note a direction reversal away from a terminal (detector-detected).
+    def record_weekday_evidence(self, now: float, kind: str) -> None:
+        """Note one live tell that the car is driving like a weekday.
 
-        A Shabbat sweep runs monotonically between the two terminals, so a
-        reversal in the middle of the building is passenger control - "up to 10,
-        wait, down to 7, back up to 9" cannot be a sweep.  Recorded always and
-        judged only after the halachic window closes.
+        `kind` is "reversal" (changed direction away from a terminal - a Shabbat
+        sweep is monotonic between them) or "short_stop" (stopped far below the
+        configured dwell at a floor the program is supposed to dwell on).
+        Together they describe "up to 10, wait 4s, down to 7, wait 9s, up to 9".
+
+        Recorded unconditionally and judged only once the halachic window has
+        closed, so this can never end a Shabbat that is still in progress.
         """
-        window_s = float(self._tunables["POST_WINDOW_REVERSAL_WINDOW_MIN"]) * 60 * _TIME_SCALE
-        self._reversals.append(now)
-        self._reversals = [t for t in self._reversals if now - t <= window_s][-64:]
+        window_s = float(self._tunables["POST_WINDOW_ANOMALY_WINDOW_MIN"]) * 60 * _TIME_SCALE
+        self._weekday_evidence.append((now, kind))
+        self._weekday_evidence = [
+            e for e in self._weekday_evidence if now - e[0] <= window_s
+        ][-64:]
 
     def check_post_window_exit(
         self,
@@ -427,16 +442,22 @@ class ElevatorFSM:
         # Fast path - positive evidence of passenger control right now.  Catches
         # a busy motzaei-Shabbat within minutes, and unlike the cadence path it
         # does not depend on the cycle machinery measuring anything correctly.
-        rev_needed = int(self._tunables["POST_WINDOW_REVERSALS_FOR_EXIT"])
-        rev_window_min = float(self._tunables["POST_WINDOW_REVERSAL_WINDOW_MIN"])
-        rev_window_s = rev_window_min * 60 * _TIME_SCALE
-        recent_reversals = [t for t in self._reversals if now - t <= rev_window_s]
-        if rev_needed > 0 and len(recent_reversals) >= rev_needed:
+        needed = int(self._tunables["POST_WINDOW_ANOMALIES_FOR_EXIT"])
+        ev_window_min = float(self._tunables["POST_WINDOW_ANOMALY_WINDOW_MIN"])
+        ev_window_s = ev_window_min * 60 * _TIME_SCALE
+        recent = [e for e in self._weekday_evidence if now - e[0] <= ev_window_s]
+        if needed > 0 and len(recent) >= needed:
+            reversals = sum(1 for _, k in recent if k == "reversal")
+            short_stops = len(recent) - reversals
+            parts = []
+            if reversals:
+                parts.append(f"{reversals} שינויי-כיוון באמצע הבניין")
+            if short_stops:
+                parts.append(f"{short_stops} עצירות קצרות מהמוגדר")
             return self._exit_post_window(now, (
                 "יציאה ממצב שבת - חלון השבת ההלכתי הסתיים לפני "
                 f"{since_window:.0f} דק', והמעלית נוסעת כמו ביום חול: "
-                f"{len(recent_reversals)} שינויי-כיוון באמצע הבניין "
-                f"ב-{rev_window_min:.0f} הדקות האחרונות"
+                f"{' ו-'.join(parts)} ב-{ev_window_min:.0f} הדקות האחרונות"
             ))
 
         # Backstop path - the sweeps simply stopped arriving.  This is the one
@@ -464,7 +485,7 @@ class ElevatorFSM:
     def _exit_post_window(self, now: float, reason: str) -> FSMResult:
         self._violations.clear()
         self._consecutive_nonmatch = 0
-        self._reversals.clear()
+        self._weekday_evidence.clear()
         return self._transition_to(DetectorState.NORMAL, now, FSMResult(
             new_state=DetectorState.NORMAL,
             shabbat_active=False,
@@ -515,7 +536,7 @@ class ElevatorFSM:
             "consecutive_nonmatch": self._consecutive_nonmatch,
             "expected_cycle_period": self._expected_cycle_period,
             "left_window_at": self._left_window_at,
-            "reversals": list(self._reversals),
+            "weekday_evidence": [[t, k] for t, k in self._weekday_evidence],
             "violations": [
                 {"ts": v.ts, "floor": v.floor, "reason": v.reason}
                 for v in self._violations
@@ -541,7 +562,9 @@ class ElevatorFSM:
         fsm._left_window_at = d.get("left_window_at")
         if fsm._left_window_at is not None:
             fsm._left_window_at = float(fsm._left_window_at)
-        fsm._reversals = [float(t) for t in (d.get("reversals") or [])]
+        fsm._weekday_evidence = [
+            (float(e[0]), str(e[1])) for e in (d.get("weekday_evidence") or [])
+        ]
         fsm._violations = [
             Violation(ts=float(v["ts"]), floor=str(v["floor"]), reason=str(v["reason"]))
             for v in d.get("violations", [])

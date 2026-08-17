@@ -884,13 +884,13 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                     source = resolve_source(el_config, settings)
                     _apply_result(vresult, fsm, fb, prev_fsm_state, test_mode, override, source)
 
-            # ── Direction reversal away from a terminal ───────────────────────
-            # A Shabbat sweep is monotonic between the terminals, so reversing
-            # mid-building is passenger control.  Recorded on every event and
-            # judged only once the halachic window has closed (see
-            # fsm.check_post_window_exit); the turnarounds at TOP/BOTTOM are
-            # legitimate and excluded.  This runs on the already deduplicated,
-            # flap-suppressed stream, so reader oscillation is not counted.
+            # ── Live "this is weekday driving" evidence ───────────────────────
+            # Two tells about the floor we have just left (its dwell is only
+            # knowable now, when the next floor arrives).  Recorded on every
+            # event and judged only once the halachic window has closed (see
+            # fsm.check_post_window_exit), so neither can end a Shabbat that is
+            # still in progress.  Runs on the already deduplicated, flap-
+            # suppressed stream, so reader oscillation is not counted.
             if prev_event is not None and prev_prev is not None:
                 try:
                     a, b, c = int(prev_prev.floor), int(prev_event.floor), int(floor)
@@ -898,8 +898,29 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                         str(el_config.get("TOP_FLOOR", "")).strip(),
                         str(el_config.get("BOTTOM_FLOOR", "")).strip(),
                     }
-                    if (b - a) * (c - b) < 0 and prev_event.floor not in terminals:
-                        fsm.record_reversal(now)
+                    if prev_event.floor not in terminals:
+                        if (b - a) * (c - b) < 0:
+                            # Reversed direction mid-building: not a sweep.
+                            fsm.record_weekday_evidence(now, "reversal")
+                        else:
+                            # Stopped far below the configured dwell at a floor
+                            # the program is meant to dwell on.  Only floors in
+                            # the stop list for the CURRENT direction count -
+                            # checking every floor also flags the express leg,
+                            # where passing quickly is exactly correct, and that
+                            # fires right through a legitimate Shabbat.
+                            wanted = el_config.get(
+                                "STOPPING_FLOORS_UP" if c > b else "STOPPING_FLOORS_DOWN"
+                            ) or []
+                            if prev_event.floor in {str(f).strip() for f in wanted}:
+                                waits = normalize_floor_waits(el_config.get("FLOOR_WAITS"))
+                                expected = float(waits.get(
+                                    prev_event.floor,
+                                    el_config.get("TIME_PER_FLOOR", 26),
+                                ))
+                                ratio = float(fsm.tunables["POST_WINDOW_SHORT_STOP_RATIO"])
+                                if (now - prev_event.timestamp) < expected * ratio:
+                                    fsm.record_weekday_evidence(now, "short_stop")
                 except (TypeError, ValueError):
                     pass
 
