@@ -205,7 +205,7 @@ class Installer:
     def _require_root(self) -> bool:
         if self.env.is_root or self.dry_run:
             return True
-        self.emit("נדרשת הרשאת root (sudo) לפעולה זו — מדלג.", "warn")
+        self.emit("נדרשת הרשאת root (sudo) לפעולה זו - מדלג.", "warn")
         return False
 
     def _templates_dir(self) -> str:
@@ -274,7 +274,7 @@ class Installer:
             if os.path.exists("/dev/ttyUSB0"):
                 self.emit("/dev/ttyUSB0 קיים ✓", "ok")
             else:
-                self.emit("שים לב: /dev/ttyUSB0 עדיין לא קיים — ודא שהקורא מחובר.", "warn")
+                self.emit("שים לב: /dev/ttyUSB0 עדיין לא קיים - ודא שהקורא מחובר.", "warn")
         return StepResult("cp210x", True)
 
     # ── 3. הרשאות serial ──────────────────────────────────────────────────────
@@ -818,7 +818,7 @@ class Installer:
         self._run(["loginctl", "enable-linger", self.env.user], check=False)
         # הפעלה עבור המשתמש (מפעיל את rpi-connect.service ב-user systemd).
         self._run(self._user_cmd(["rpi-connect", "on"]), check=False)
-        self.emit("rpi-connect מותקן ופעיל — נותרה התחברות חד-פעמית (signin).", "ok")
+        self.emit("rpi-connect מותקן ופעיל - נותרה התחברות חד-פעמית (signin).", "ok")
         return StepResult("rpi_connect", True)
 
     def rpi_connect_status(self) -> dict:
@@ -865,9 +865,9 @@ class Installer:
             self.emit("DRY-RUN: rpi-connect signin", "dry")
             return
         if not shutil.which("rpi-connect"):
-            self.emit("rpi-connect לא מותקן — מדלג על ההתחברות.", "warn")
+            self.emit("rpi-connect לא מותקן - מדלג על ההתחברות.", "warn")
             return
-        self.emit("התחברות ל-RPi Connect — פתח את הקישור שיוצג ואשר בחשבון ה-Raspberry Pi:", "step")
+        self.emit("התחברות ל-RPi Connect - פתח את הקישור שיוצג ואשר בחשבון ה-Raspberry Pi:", "step")
         try:
             subprocess.run(self._user_cmd(["rpi-connect", "signin"]))
         except KeyboardInterrupt:

@@ -344,7 +344,7 @@ class ElevatorFSM:
         return self._transition_to(DetectorState.CANDIDATE_SHABBAT, now, FSMResult(
             new_state=DetectorState.CANDIDATE_SHABBAT,
             shabbat_active=None,
-            reason_he="מחזור אפשרי החל — ממתין להשלמה",
+            reason_he="מחזור אפשרי החל - ממתין להשלמה",
         ))
 
     def on_cycle_completed(
@@ -376,7 +376,7 @@ class ElevatorFSM:
                 new_state=self.state,
                 shabbat_active=None,
                 reason_he=(
-                    f"חסום ע״י זמן הדבקה מינימלי — "
+                    f"חסום ע״י זמן הדבקה מינימלי - "
                     f"{self._remaining_stickiness_min(now):.0f} דקות נשארות"
                 ),
                 violation=violation,
@@ -789,7 +789,7 @@ class ElevatorFSM:
                     return FSMResult(
                         new_state=self.state,
                         shabbat_active=None,
-                        reason_he="שבת זוהתה מחוץ לחלון הלכתי — מתעלם",
+                        reason_he="שבת זוהתה מחוץ לחלון הלכתי - מתעלם",
                         last_cycle_summary=summary,
                     )
 
@@ -805,7 +805,7 @@ class ElevatorFSM:
                     new_state=self.state,
                     shabbat_active=None,
                     reason_he=(
-                        f"מחזור {self._consecutive_matches}/{required} תואם — "
+                        f"מחזור {self._consecutive_matches}/{required} תואם - "
                         f"ממתין למחזור הבא"
                     ),
                     last_cycle_summary=summary,
@@ -818,7 +818,7 @@ class ElevatorFSM:
                 return FSMResult(
                     new_state=self.state,
                     shabbat_active=None,
-                    reason_he=f"מחזור לא תאם — {self._mismatch_reason(eval_result)}",
+                    reason_he=f"מחזור לא תאם - {self._mismatch_reason(eval_result)}",
                     last_cycle_summary=summary,
                 )
 
@@ -839,7 +839,7 @@ class ElevatorFSM:
                     new_state=self.state,
                     shabbat_active=None,
                     reason_he=(
-                        f"מחזור חורג — חסום ע״י זמן דבקה "
+                        f"מחזור חורג - חסום ע״י זמן דבקה "
                         f"({self._remaining_stickiness_min(now):.0f} דקות נשארות)"
                     ),
                     last_cycle_summary=summary,
@@ -865,7 +865,7 @@ class ElevatorFSM:
                 return self._transition_to(DetectorState.SHABBAT, now, FSMResult(
                     new_state=DetectorState.SHABBAT,
                     shabbat_active=None,
-                    reason_he="מחזור תקין — חזרה למצב שבת",
+                    reason_he="מחזור תקין - חזרה למצב שבת",
                     last_cycle_summary=summary,
                 ))
             # Structural trigger only, no double-counted window Violation (#10).
@@ -889,7 +889,7 @@ class ElevatorFSM:
         cov_up = int((summary.get("coverage_up") or 1) * 100)
         cov_dn = int((summary.get("coverage_dn") or 1) * 100)
         reason = (
-            "נכנס למצב שבת — מחזור תאם הגדרות: "
+            "נכנס למצב שבת - מחזור תאם הגדרות: "
             f"כיסוי עלייה {cov_up}% / ירידה {cov_dn}%, "
             f"נסיעה רצופה (0 קפיצות-אחורה), "
             f"משך {summary.get('duration_s')}s "
@@ -948,7 +948,7 @@ class ElevatorFSM:
                 return self._transition_to(DetectorState.CANDIDATE_EXIT, now, FSMResult(
                     new_state=DetectorState.CANDIDATE_EXIT,
                     shabbat_active=None,
-                    reason_he=f"{why} — ממתין לאישור יציאה",
+                    reason_he=f"{why} - ממתין לאישור יציאה",
                     last_cycle_summary=summary,
                 ))
             elif self.state == DetectorState.CANDIDATE_EXIT:
@@ -956,7 +956,7 @@ class ElevatorFSM:
                 return self._transition_to(DetectorState.NORMAL, now, FSMResult(
                     new_state=DetectorState.NORMAL,
                     shabbat_active=False,
-                    reason_he=f"יציאה ממצב שבת — {why}",
+                    reason_he=f"יציאה ממצב שבת - {why}",
                     last_cycle_summary=summary,
                 ))
 
@@ -969,14 +969,14 @@ class ElevatorFSM:
             return self._transition_to(DetectorState.NORMAL, now, FSMResult(
                 new_state=DetectorState.NORMAL,
                 shabbat_active=False,
-                reason_he="יציאה ממצב שבת — פסק זמן ב-CANDIDATE_EXIT",
+                reason_he="יציאה ממצב שבת - פסק זמן ב-CANDIDATE_EXIT",
                 last_cycle_summary=summary,
             ))
 
         return FSMResult(
             new_state=self.state,
             shabbat_active=None,
-            reason_he=f"{len(recent)}/{threshold} חריגות — ממשיך לצבור ראיות",
+            reason_he=f"{len(recent)}/{threshold} חריגות - ממשיך לצבור ראיות",
             last_cycle_summary=summary,
         )
 

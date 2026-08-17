@@ -1,5 +1,5 @@
 [Unit]
-Description=Elevator Fleet Agent — version heartbeat + secret-gated remote update
+Description=Elevator Fleet Agent - version heartbeat + secret-gated remote update
 After=network-online.target
 Wants=network-online.target
 

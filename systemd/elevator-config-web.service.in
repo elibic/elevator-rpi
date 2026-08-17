@@ -1,5 +1,5 @@
 [Unit]
-Description=Elevator RFID Config — local web admin tool (localhost:8080)
+Description=Elevator RFID Config - local web admin tool (localhost:8080)
 After=network.target
 
 [Service]

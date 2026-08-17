@@ -72,7 +72,7 @@ def _collect_tags(inst: core.Installer, existing: dict) -> dict:
 def _run_unattended(inst: core.Installer) -> None:
     """התקנה/עדכון ללא שאלות — לעדכון מרחוק (fleet-agent) או הרצה ללא TTY.
     משתמש בקונפיג הקיים (rfid_config.json); אין שום input() ⇒ אין EOFError."""
-    _progress("מצב unattended — מעדכן עם הקונפיג הקיים, ללא שאלות.", "step")
+    _progress("מצב unattended - מעדכן עם הקונפיג הקיים, ללא שאלות.", "step")
     inst.install_system_packages()
     inst.install_cp210x_driver()
     inst.setup_serial_permissions()
@@ -124,7 +124,7 @@ def run_cli(dry_run: bool = False, mock_serial: bool = False, unattended: bool =
     print(f"  Pi:      {'כן' if env.is_pi else 'לא'}   root: {'כן' if env.is_root else 'לא'}")
     print(f"  /dev/ttyUSB0: {'קיים' if env.serial_present else 'לא קיים'}")
     if dry_run:
-        print(f"  {YELLOW}מצב DRY-RUN — לא יבוצעו שינויים{RESET}")
+        print(f"  {YELLOW}מצב DRY-RUN - לא יבוצעו שינויים{RESET}")
     print()
 
     if unattended:

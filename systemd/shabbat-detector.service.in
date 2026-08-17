@@ -1,5 +1,5 @@
 [Unit]
-Description=Shabbat Elevator Detector — behavioral Shabbat-mode detection
+Description=Shabbat Elevator Detector - behavioral Shabbat-mode detection
 After=network-online.target
 Wants=network-online.target
 

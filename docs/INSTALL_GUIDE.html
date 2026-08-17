@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>מדריך התקנה — מעלית RFID</title>
+<title>מדריך התקנה - מעלית RFID</title>
 <style>
   :root { --primary:#2563eb; --dark:#1e3a8a; --ok:#10b981; --warn:#f59e0b; --bg:#f8fafc; --code:#1e1e1e; }
   * { box-sizing: border-box; }
@@ -29,14 +29,14 @@
 </head>
 <body>
 
-<h1>🛗 מדריך התקנה — מערכת מעלית RFID</h1>
+<h1>🛗 מדריך התקנה - מערכת מעלית RFID</h1>
 <p>מדריך מלא להתקנה על Raspberry Pi חדש, בפקודה אחת. זמן משוער: 15–20 דקות.</p>
 
 <div class="info">
   <b>שלושה דברים שכדאי שיהיו מוכנים לפני שמתחילים:</b>
   <ol style="margin:6px 0;">
     <li>כתובת ה-<b>Firebase</b> (ה-URL של מסד הנתונים).</li>
-    <li><b>שם המעלית</b> (ELEVATOR_ID — למשל A או B).</li>
+    <li><b>שם המעלית</b> (ELEVATOR_ID - למשל A או B).</li>
     <li>ה-<b>SECRET_KEY</b> (מפתח הכתיבה ל-Firebase).</li>
   </ol>
 </div>
@@ -59,7 +59,7 @@
   <li><b>Permissions</b> → <b>Repository permissions</b> → <b>Contents</b> → <b>Read-only</b>.</li>
   <li><b>Generate token</b> → <b>העתק ושמור</b> את הטוקן (מתחיל ב-<code>github_pat_...</code>).</li>
 </ol>
-<div class="note">⚠️ הטוקן מוצג <b>פעם אחת בלבד</b>. שמור אותו במקום בטוח. אם איבדת — פשוט צור חדש.</div>
+<div class="note">⚠️ הטוקן מוצג <b>פעם אחת בלבד</b>. שמור אותו במקום בטוח. אם איבדת - פשוט צור חדש.</div>
 
 <h2><span class="num">2</span> הורדת הקוד ל-Pi</h2>
 <p>פתח <b>טרמינל</b> על ה-Pi והקלד (החלף את <code>&lt;TOKEN&gt;</code> בטוקן שלך):</p>
@@ -67,9 +67,9 @@
 cd ~/elevator-RFID</code></pre>
 
 <h2><span class="num">3</span> הרצת ההתקנה</h2>
-<p><b>אפשרות א' — אשף בטרמינל:</b></p>
+<p><b>אפשרות א' - אשף בטרמינל:</b></p>
 <pre><code>sudo ./setup.sh</code></pre>
-<p><b>אפשרות ב' — כלי גרפי בדפדפן (מומלץ למתחילים):</b></p>
+<p><b>אפשרות ב' - כלי גרפי בדפדפן (מומלץ למתחילים):</b></p>
 <pre><code>sudo ./setup.sh --web</code></pre>
 <div class="ok">
   הפקודה עושה הכל לבד ובסדר הנכון: מושכת קוד עדכני → דרייבר הקורא (CP210x) → הרשאות →
@@ -79,9 +79,9 @@ cd ~/elevator-RFID</code></pre>
 <h2><span class="num">4</span> מילוי ההגדרות</h2>
 <p>האשף (טרמינל או דפדפן) יבקש:</p>
 <ul>
-  <li><b>FIREBASE_URL</b>, <b>ELEVATOR_ID</b>, <b>SECRET_KEY</b> — מהפרטים שהכנת.</li>
+  <li><b>FIREBASE_URL</b>, <b>ELEVATOR_ID</b>, <b>SECRET_KEY</b> - מהפרטים שהכנת.</li>
   <li><b>מיפוי תגים:</b> קרב כל תג RFID לקורא, ולחץ "סרוק תג"/ענה בטרמינל, ואז הקלד את מספר הקומה. חזור לכל התגים.</li>
-  <li><b>התראות:</b> כבר לא מוגדרות כאן — הן מנוהלות מרכזית מדשבורד האדמין (🔔 התראות לכל פרויקט).</li>
+  <li><b>התראות:</b> כבר לא מוגדרות כאן - הן מנוהלות מרכזית מדשבורד האדמין (🔔 התראות לכל פרויקט).</li>
 </ul>
 
 <h2><span class="num">5</span> חיבור ל-Raspberry Pi Connect</h2>
@@ -90,7 +90,7 @@ cd ~/elevator-RFID</code></pre>
 
 <h2><span class="num">6</span> בדיקה וניהול שוטף</h2>
 <ul>
-  <li>בדיקה: <code>python monitor.py --watch</code> — רואים את הקומה והמצב מתעדכנים.</li>
+  <li>בדיקה: <code>python monitor.py --watch</code> - רואים את הקומה והמצב מתעדכנים.</li>
   <li>על שולחן העבודה נוצר אייקון <b>"הגדרת מעלית RFID"</b> שפותח את הכלי הגרפי (דשבורד: סטטוס, הפעלה/עצירה, לוגים, עדכון מגיט).</li>
 </ul>
 

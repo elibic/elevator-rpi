@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}דשבורד — מעלית RFID{% endblock %}
+{% block title %}דשבורד - מעלית RFID{% endblock %}
 {% block page %}dashboard{% endblock %}
 {% block content %}
 <h1 class="dash-h1">דשבורד ניהול</h1>
@@ -55,10 +55,10 @@ const SERVICES = { 'fix_cp210x': 'דרייבר', 'rfid-tracker': 'Tracker', 'sha
 
 // הסבר בעברית לכל מצב-זיהוי של גלאי השבת.
 const FSM_INFO = {
-  NORMAL:            { he: 'רגיל',        desc: 'אין מחזור שבת — פעילות מעלית רגילה.' },
+  NORMAL:            { he: 'רגיל',        desc: 'אין מחזור שבת - פעילות מעלית רגילה.' },
   CANDIDATE_SHABBAT: { he: 'בודק שבת',    desc: 'זוהתה תחילת מחזור-שבת אפשרי. ממתין לכמה מחזורים תואמים רצופים לפני שמאשרים.' },
-  SHABBAT:           { he: 'שבת',         desc: 'זוהה דפוס שבת יציב — SHABBAT_ACTIVE=true.' },
-  CANDIDATE_EXIT:    { he: 'בודק יציאה',  desc: 'פעילות חריגה בזמן שבת — סופר הפרות לפני חזרה לחול.' },
+  SHABBAT:           { he: 'שבת',         desc: 'זוהה דפוס שבת יציב - SHABBAT_ACTIVE=true.' },
+  CANDIDATE_EXIT:    { he: 'בודק יציאה',  desc: 'פעילות חריגה בזמן שבת - סופר הפרות לפני חזרה לחול.' },
 };
 
 // מקור הדריסה הידנית (override) — auto/force_on/force_off (string או {value}), מ-elevator_configs/{id}.
@@ -113,7 +113,7 @@ async function refresh() {
       <div class="fsm-desc">${info.desc}</div>
       <div class="kv"><span>מקור (override)</span><b>${overrideLabel(cfg.SHABBAT_OVERRIDE)}</b></div>
       <div class="kv"><span>SHABBAT_ACTIVE</span>${shActive ? '<span class="pill ok">true</span>' : '<span class="pill warn">false</span>'}</div>
-      <div class="kv"><span>סיבת מעבר אחרון</span><span class="muted">${sd.last_transition_reason || '—'}</span></div>
+      <div class="kv"><span>סיבת מעבר אחרון</span><span class="muted">${sd.last_transition_reason || '-'}</span></div>
       ${waitNote}`;
   }
 }
@@ -122,14 +122,14 @@ async function loadInstallInfo() {
   try {
     const [env, cfg] = await Promise.all([api('/api/env'), api('/api/config')]);
     const s = cfg.settings || {}, tags = cfg.tags || {};
-    const fbHost = (s.FIREBASE_URL || '').replace(/^https?:\/\//, '').split('/')[0] || '—';
+    const fbHost = (s.FIREBASE_URL || '').replace(/^https?:\/\//, '').split('/')[0] || '-';
     document.getElementById('installInfo').innerHTML = `
-      <div class="kv"><span>מעלית (ELEVATOR_ID)</span><b>${s.ELEVATOR_ID || '—'}</b></div>
+      <div class="kv"><span>מעלית (ELEVATOR_ID)</span><b>${s.ELEVATOR_ID || '-'}</b></div>
       <div class="kv"><span>Firebase</span><span class="ltr muted">${fbHost}</span></div>
       <div class="kv"><span>תגים ממופים</span><b>${Object.keys(tags).length}</b></div>
       <div class="kv"><span>משתמש</span><span>${env.user}</span></div>
       <div class="kv"><span>תיקייה</span><span class="ltr muted">${env.project_dir}</span></div>
-      <div class="kv"><span>ענף git</span><span class="ltr">${env.git_branch || '—'}</span></div>
+      <div class="kv"><span>ענף git</span><span class="ltr">${env.git_branch || '-'}</span></div>
       <div class="kv"><span>Raspberry Pi</span><span>${env.is_pi ? 'כן' : 'לא'}</span></div>
       <div class="kv"><span>קורא RFID</span>${env.serial_present ? '<span class="pill ok">מחובר</span>' : '<span class="pill warn">לא מזוהה</span>'}</div>`;
   } catch (e) {
@@ -159,7 +159,7 @@ async function refreshRpi() {
     const el = document.getElementById('rpiConnect');
     if (!s.installed) el.innerHTML = '<span class="pill warn">לא מותקן</span>';
     else if (s.signed_in) el.innerHTML = '<span class="pill ok">מחובר</span>';
-    else el.innerHTML = '<span class="pill warn">מותקן — לא מחובר</span>';
+    else el.innerHTML = '<span class="pill warn">מותקן - לא מחובר</span>';
   } catch (e) {}
 }
 async function rpiSignin(btn) {
