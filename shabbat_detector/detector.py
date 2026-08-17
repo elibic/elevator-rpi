@@ -719,7 +719,7 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                 # Only once the minimum-stickiness window has passed (exit is
                 # blocked before that anyway) — this keeps the nonmatch counter
                 # from accumulating on blocked ticks and exiting prematurely.
-                and fsm._stickiness_expired(now)
+                and fsm._stickiness_expired(now, hebcal_ok)
                 # Genuinely off-pattern for the required gap since the LAST real
                 # matching cycle (true anchor, never overwritten here)...
                 and (now - last_match) >= gap_needed
@@ -743,6 +743,29 @@ def run(config_path: str = "rfid_config.json", test_mode: bool = False) -> None:
                 vresult = fsm.process_violation(v, el_config, now, hebcal_ok)
                 _apply_result(vresult, fsm, fb, prev_state, test_mode, override, source)
                 _shared["last_missed_fire_ts"] = now
+                prev_state = fsm.state
+
+            # ── Mechanism 4: the halachic window closed and the Shabbat ─────
+            # program is no longer running.  This is the exit path for an
+            # elevator that stops at every floor: its stop-set covers the whole
+            # building, so no stop is ever "illegal" and Mechanisms 1-2 plus the
+            # mid-cycle violation check can never fire for it.  Anchored to the
+            # Hebcal window rather than to entry time, so it does not care when
+            # the building started its program.
+            pwresult = fsm.check_post_window_exit(now, hebcal_ok, el_config)
+            if pwresult is not None:
+                log.info("Watchdog: post-window exit | %s", pwresult.reason_he)
+                _apply_result(pwresult, fsm, fb, prev_state, test_mode, override, source)
+                prev_state = fsm.state
+
+            # ── Mechanism 5: CANDIDATE_EXIT timeout, on the clock ───────────
+            # _maybe_exit only re-checks the timeout when fresh evidence
+            # arrives, so a car that goes quiet in CANDIDATE_EXIT used to stay
+            # there long past the deadline (Ramada B: due 22:09, left 23:25).
+            toresult = fsm.check_candidate_exit_timeout(now, hebcal_ok)
+            if toresult is not None:
+                log.info("Watchdog: CANDIDATE_EXIT timeout expired")
+                _apply_result(toresult, fsm, fb, prev_state, test_mode, override, source)
 
     def _watchdog_loop() -> None:
         # Tick every 30s.  Cheap operation when not in SHABBAT/CANDIDATE_EXIT.

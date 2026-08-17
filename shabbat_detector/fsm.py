@@ -148,7 +148,28 @@ class ElevatorFSM:
         # If no Shabbat-pattern cycle is seen for this many * the config-implied
         # cycle period, treat it as a regime break (catches motzaei-Shabbat when
         # the steady cadence stops).  0 disables the cadence check.
+        # NOTE: this one runs *inside* the halachic window too, where a merely
+        # mis-measured cycle is indistinguishable from a real cadence break - it
+        # caused mid-Shabbat false exits and is disabled fleet-wide.  The
+        # POST_WINDOW_* check below is its window-scoped, safe replacement.
         "MISSED_CYCLE_FACTOR":           2.5,
+
+        # ── Post-window exit (burden of proof flips at havdalah) ───
+        # Inside the Hebcal window the presumption is "Shabbat continues", so
+        # leaving needs positive evidence of non-Shabbat behaviour.  Once the
+        # window has closed that presumption is gone: staying in Shabbat mode is
+        # what needs proving, and the proof is a *still-arriving* Shabbat-pattern
+        # cycle.  Absent one, exit.  This is the only exit path that works for an
+        # elevator whose Shabbat program stops at every floor (its stop-set
+        # covers the whole building, so no stop can ever be "illegal" and the
+        # violation-based paths are structurally dead - Ramada B and C).
+        "POST_WINDOW_EXIT_ENABLED":      True,
+        # Grace past the end of the Hebcal window before this check may fire.
+        "POST_WINDOW_GRACE_MIN":         15,
+        # ...and require this many * the config-implied cycle period since the
+        # last matching cycle, so we never exit while sweeps are visibly
+        # continuing.  2.5 tolerates one completely dropped cycle measurement.
+        "POST_WINDOW_CYCLE_FACTOR":      2.5,
     }
 
     # Cooldown between state transitions (prevents rapid flapping)
@@ -179,6 +200,12 @@ class ElevatorFSM:
         # Refreshed on every completed-cycle evaluation; used by the cadence
         # ("missed cycle") exit check in the watchdog.
         self._expected_cycle_period: float = 0.0
+
+        # When the Hebcal window was first observed closed while still in
+        # Shabbat mode.  Anchors the post-window exit grace; None while inside
+        # the window.  Persisted so a restart during motzaei-Shabbat does not
+        # silently restart the grace clock more than once.
+        self._left_window_at: Optional[float] = None
 
         # Tunables — initialised from DEFAULTS, overridden by update_settings().
         self._tunables: dict = dict(self.DEFAULTS)
@@ -311,7 +338,7 @@ class ElevatorFSM:
         if self.state not in (DetectorState.SHABBAT, DetectorState.CANDIDATE_EXIT):
             return None
 
-        if not self._stickiness_expired(now):
+        if not self._stickiness_expired(now, hebcal_in_window):
             return FSMResult(
                 new_state=self.state,
                 shabbat_active=None,
@@ -324,6 +351,106 @@ class ElevatorFSM:
 
         self._add_violation(violation, now)
         return self._maybe_exit(now, hebcal_in_window)
+
+    def check_post_window_exit(
+        self,
+        now: float,
+        hebcal_in_window: bool,
+        config: dict,
+    ) -> Optional[FSMResult]:
+        """Outside the halachic window, Shabbat mode has to keep proving itself.
+
+        Inside the window this is a no-op: the presumption is that Shabbat
+        continues, and only the evidence-based paths (illegal stops, violations,
+        non-matching cycles) may end it.  That asymmetry is deliberate - an
+        in-window cadence check cannot tell a dropped cycle measurement from a
+        real regime change, which is exactly how MISSED_CYCLE_FACTOR produced
+        mid-Shabbat false exits.
+
+        Once the window has closed, the question flips to "is the Shabbat
+        program still running?", answered by the arrival of matching cycles.  A
+        building whose program legitimately runs past havdalah keeps producing
+        them and stays in Shabbat; one that has stopped exits after the grace.
+
+        Returns an FSMResult only when it actually exits, else None.
+        """
+        if self.state not in (DetectorState.SHABBAT, DetectorState.CANDIDATE_EXIT):
+            return None
+        if not self._tunables.get("POST_WINDOW_EXIT_ENABLED", True):
+            return None
+
+        if hebcal_in_window:
+            # Back inside (or never left) - disarm.  Note HebcalGate is
+            # fail-open: when Hebcal is unreachable it reports "in window", so a
+            # network outage can only ever suppress this exit, never cause one.
+            self._left_window_at = None
+            return None
+
+        if self._left_window_at is None:
+            # First tick that sees the window closed - start the grace clock
+            # here rather than assuming when it shut (restart-safe).
+            self._left_window_at = now
+            return None
+
+        grace_s = float(self._tunables["POST_WINDOW_GRACE_MIN"]) * 60 * _TIME_SCALE
+        if now - self._left_window_at < grace_s:
+            return None
+
+        period = self._expected_cycle_period or self.expected_cycle_period_from_config(config)
+        if period <= 0:
+            return None   # cannot reason about cadence without a period
+
+        factor = float(self._tunables["POST_WINDOW_CYCLE_FACTOR"])
+        anchor = self._last_clean_cycle_ts or self._shabbat_entered_at or self._entered_state_at
+        if not anchor:
+            return None
+        since_match = now - anchor
+        if since_match < factor * period * _TIME_SCALE:
+            return None   # sweeps are still arriving - the program is alive
+
+        reason = (
+            "יציאה ממצב שבת - חלון השבת ההלכתי הסתיים לפני "
+            f"{(now - self._left_window_at) / 60:.0f} דק' "
+            f"ולא זוהה מחזור-שבת תקין מזה {since_match / 60:.0f} דק' "
+            f"({since_match / period:.1f}x מזמן-המחזור הצפוי)"
+        )
+        self._violations.clear()
+        self._consecutive_nonmatch = 0
+        return self._transition_to(DetectorState.NORMAL, now, FSMResult(
+            new_state=DetectorState.NORMAL,
+            shabbat_active=False,
+            reason_he=reason,
+        ))
+
+    def check_candidate_exit_timeout(
+        self, now: float, hebcal_in_window: bool = False
+    ) -> Optional[FSMResult]:
+        """Time-only CANDIDATE_EXIT timeout, safe to call from the watchdog.
+
+        The timeout inside _maybe_exit is only reached when a violation or a
+        completed cycle arrives.  A car that goes quiet right after entering
+        CANDIDATE_EXIT therefore sat there indefinitely: Ramada B entered at
+        21:59, its 10-minute timeout lapsed at 22:09, and it only left at 23:25
+        when an unrelated no-report violation happened to wake the FSM up.
+
+        Like the post-window check this only fires once the halachic window has
+        closed.  A timeout is an *absence* of evidence, and inside Shabbat an
+        absence means the car simply went quiet - firing there would end Shabbat
+        on silence and pre-empt the clean cycle that rescues CANDIDATE_EXIT back
+        to SHABBAT.  Replaying Ramada C over 2026-08-01 showed exactly that: an
+        unconditional clock timeout exited 13 minutes *before* havdalah.
+        """
+        if self.state != DetectorState.CANDIDATE_EXIT or not self._candidate_exit_started:
+            return None
+        if hebcal_in_window:
+            return None
+        if now - self._candidate_exit_started <= self._candidate_exit_timeout_seconds():
+            return None
+        return self._transition_to(DetectorState.NORMAL, now, FSMResult(
+            new_state=DetectorState.NORMAL,
+            shabbat_active=False,
+            reason_he="יציאה ממצב שבת - פסק זמן ב-CANDIDATE_EXIT",
+        ))
 
     # ── Serialization ───────────────────────────────────────────────────────────
 
@@ -338,6 +465,7 @@ class ElevatorFSM:
             "consecutive_matches": self._consecutive_matches,
             "consecutive_nonmatch": self._consecutive_nonmatch,
             "expected_cycle_period": self._expected_cycle_period,
+            "left_window_at": self._left_window_at,
             "violations": [
                 {"ts": v.ts, "floor": v.floor, "reason": v.reason}
                 for v in self._violations
@@ -360,6 +488,9 @@ class ElevatorFSM:
         fsm._consecutive_matches = int(d.get("consecutive_matches", 0))
         fsm._consecutive_nonmatch = int(d.get("consecutive_nonmatch", 0))
         fsm._expected_cycle_period = float(d.get("expected_cycle_period", 0) or 0)
+        fsm._left_window_at = d.get("left_window_at")
+        if fsm._left_window_at is not None:
+            fsm._left_window_at = float(fsm._left_window_at)
         fsm._violations = [
             Violation(ts=float(v["ts"]), floor=str(v["floor"]), reason=str(v["reason"]))
             for v in d.get("violations", [])
@@ -604,7 +735,7 @@ class ElevatorFSM:
                     last_cycle_summary=summary,
                 )
             # Mismatch in SHABBAT
-            if not self._stickiness_expired(now):
+            if not self._stickiness_expired(now, hebcal_in_window):
                 return FSMResult(
                     new_state=self.state,
                     shabbat_active=None,
@@ -769,8 +900,19 @@ class ElevatorFSM:
             result.new_state = new_state
         return result
 
-    def _stickiness_expired(self, now: float) -> bool:
+    def _stickiness_expired(self, now: float, hebcal_in_window: bool = True) -> bool:
+        """Stickiness protects an in-progress Shabbat from premature exit.
+
+        Past the halachic window there is nothing left to protect, so it lapses
+        regardless of STICKINESS_MINUTES.  Without this the protection is
+        anchored to *entry* time, which makes the exit window depend on when the
+        building happened to start its program: Ramada B enters ~14 minutes
+        later than A and D, so a 1500-minute (25 h) stickiness kept it blocked
+        past the point where its evidence had already come and gone.
+        """
         if self._shabbat_entered_at is None:
+            return True
+        if not hebcal_in_window:
             return True
         return now - self._shabbat_entered_at >= self._stickiness_seconds()
 
