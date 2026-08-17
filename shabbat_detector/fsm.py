@@ -148,11 +148,12 @@ class ElevatorFSM:
         # If no Shabbat-pattern cycle is seen for this many * the config-implied
         # cycle period, treat it as a regime break (catches motzaei-Shabbat when
         # the steady cadence stops).  0 disables the cadence check.
-        # NOTE: this one runs *inside* the halachic window too, where a merely
-        # mis-measured cycle is indistinguishable from a real cadence break - it
-        # caused mid-Shabbat false exits and is disabled fleet-wide.  The
-        # POST_WINDOW_* check below is its window-scoped, safe replacement.
-        "MISSED_CYCLE_FACTOR":           2.5,
+        # DEFAULT 0 (since v1.1.10): this one runs *inside* the halachic window
+        # too, where a merely mis-measured cycle is indistinguishable from a
+        # real cadence break - it caused mid-Shabbat false exits and was zeroed
+        # fleet-wide.  The POST_WINDOW_* group below is its window-scoped, safe
+        # replacement and is on by default, so new projects no longer need this.
+        "MISSED_CYCLE_FACTOR":           0,
 
         # ── Post-window exit (burden of proof flips at havdalah) ───
         # Inside the Hebcal window the presumption is "Shabbat continues", so
