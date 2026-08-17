@@ -43,10 +43,10 @@
 - **`elevator_configs/{id}`**: קונפיג + **`SHABBAT_OVERRIDE`** (`auto`/`force_on`/`force_off` -
   מחרוזות, **לא** true/false) + **`SHABBAT_SOURCE`** (`auto`/`schedule`/`none`; חסר = ירושה
   מברירת המחדל הפרויקטלית) + `SHABBAT_DETECTOR{state,last_transition_reason}` +
-  `SHABBAT_ACTIVE` (פלט ה-Pi).
+  `SHABBAT_ACTIVE` (פלט ה-Pi) + `DISPLAY_NAME` (כינוי-תצוגה ללקוח, נערך בדיאלוג המעלית
+  ב-setup - web/kiosk בלבד, ה-Pi מתעלם).
 - **`settings`** (גלובלי): `HEBCAL_GATE_ENABLED` (+windows), `SHABBAT_DETECTION{ספי FSM}`,
-  `YOM_TOV_SHENI`, `FLOOR_ALIASES`, `ELEVATOR_ALIASES` (כינויי-תצוגה למעליות - web/kiosk בלבד,
-  ה-Pi לא קורא), **`SHABBAT_SOURCE_DEFAULT`** (`auto`/`schedule`/`none`),
+  `YOM_TOV_SHENI`, `FLOOR_ALIASES`, **`SHABBAT_SOURCE_DEFAULT`** (`auto`/`schedule`/`none`),
   **`SHABBAT_SCHEDULE_BEFORE_MINUTES`/`SHABBAT_SCHEDULE_AFTER_MINUTES`** (אופסטים מדויקים
   למצב לוח-זמנים; נפרדים מחלונות השער הרחבים), `GEO_NAME_ID`.
 - **`elevators/{id}`**: קומה חיה (tracker). **`fleet/{id}`**: version/last_seen/command (עדכון מרחוק) +
