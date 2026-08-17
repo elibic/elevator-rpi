@@ -190,6 +190,14 @@ class ElevatorFSM:
         # A stop counts as "too short" below this fraction of the configured
         # dwell (FLOOR_WAITS for the floor, else TIME_PER_FLOOR).
         "POST_WINDOW_SHORT_STOP_RATIO":  0.5,
+        # Unconditional deadline: this many minutes after the Hebcal window
+        # closes, leave Shabbat mode on the clock alone - no behavioural
+        # evidence required, whatever the detector believes.  This is the
+        # last-resort net under every other path, including failure modes we
+        # have not seen yet.  0 disables it (default: behaviour unchanged).
+        # Note it overrides the "a program still sweeping past havdalah keeps
+        # the elevator in Shabbat" property, so set it generously.
+        "POST_WINDOW_HARD_EXIT_MIN":     0,
     }
 
     # Cooldown between state transitions (prevents rapid flapping)
@@ -438,6 +446,16 @@ class ElevatorFSM:
             return None
 
         since_window = (now - self._left_window_at) / 60
+
+        # Hard deadline - time alone, no evidence at all.  Deliberately checked
+        # before every other path so that no amount of detector confusion can
+        # hold Shabbat mode past it.
+        hard_min = float(self._tunables.get("POST_WINDOW_HARD_EXIT_MIN", 0) or 0)
+        if hard_min > 0 and since_window >= hard_min:
+            return self._exit_post_window(now, (
+                f"יציאה ממצב שבת - עברו {since_window:.0f} דק' מסיום חלון השבת "
+                f"ההלכתי (מגבלת זמן קשיחה: {hard_min:.0f} דק')"
+            ))
 
         # Fast path - positive evidence of passenger control right now.  Catches
         # a busy motzaei-Shabbat within minutes, and unlike the cadence path it

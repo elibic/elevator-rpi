@@ -309,3 +309,52 @@ class TestReversalFastPath:
         fsm.record_weekday_evidence(1001.0, "reversal")
         restored = ElevatorFSM.from_dict("B", fsm.to_dict())
         assert restored._weekday_evidence == [(1000.0, "reversal"), (1001.0, "reversal")]
+
+
+class TestHardTimeDeadline:
+    """Opt-in last-resort net: leave on the clock alone, whatever the detector
+    believes.  Off by default (0), so existing deployments are unchanged."""
+
+    def _fsm_with_deadline(self, minutes):
+        settings = {"SHABBAT_DETECTION": dict(SETTINGS["SHABBAT_DETECTION"],
+                                              POST_WINDOW_HARD_EXIT_MIN=minutes)}
+        return make_fsm(settings)
+
+    def test_fires_on_time_with_no_evidence_whatsoever(self):
+        fsm = self._fsm_with_deadline(60)
+        now = 1000.0 + HOUR
+        fsm.check_post_window_exit(now, False, CONFIG_B)      # window closes
+        # Sweeps keep arriving perfectly - normally this pins it in Shabbat.
+        t = now
+        for _ in range(5):
+            t += 605
+            fsm.on_cycle_completed(matching_cycle(t - 605), CONFIG_B, SETTINGS, t, False)
+            assert fsm.check_post_window_exit(t, False, CONFIG_B) is None
+
+        result = fsm.check_post_window_exit(now + 61 * 60, False, CONFIG_B)
+        assert result is not None
+        assert result.shabbat_active is False
+        assert "מגבלת זמן קשיחה" in result.reason_he
+
+    def test_zero_disables_it(self):
+        fsm = self._fsm_with_deadline(0)
+        now = 1000.0 + HOUR
+        fsm.check_post_window_exit(now, False, CONFIG_B)
+        t = now
+        for _ in range(20):                      # sweeps continue for hours
+            t += 605
+            fsm.on_cycle_completed(matching_cycle(t - 605), CONFIG_B, SETTINGS, t, False)
+            assert fsm.check_post_window_exit(t, False, CONFIG_B) is None
+        assert fsm.state == DetectorState.SHABBAT
+
+    def test_never_fires_inside_the_window(self):
+        """Even a hard deadline may not end a Shabbat that is still running."""
+        fsm = self._fsm_with_deadline(1)
+        now = 1000.0
+        for _ in range(48):
+            now += 1800
+            assert fsm.check_post_window_exit(now, True, CONFIG_B) is None
+        assert fsm.state == DetectorState.SHABBAT
+
+    def test_default_is_off(self):
+        assert ElevatorFSM.DEFAULTS["POST_WINDOW_HARD_EXIT_MIN"] == 0
