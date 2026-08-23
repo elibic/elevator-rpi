@@ -61,11 +61,47 @@ def _color_state(state: str) -> str:
     return state or "(unknown)"
 
 
+# --- קריאות חסכוניות ל-Firebase (גרסה 1.1.11) ---
+# fetch_status רץ כל 5ש' מהדשבורד המקומי שנפתח אוטומטית על כל Pi (וגם
+# ב---watch), והוריד בכל קריאה את *כל* עץ /settings (2.3kB) + קונפיג המעלית -
+# עשרות MB ליום לכל Pi בשביל נתונים שמשתנים לעיתים רחוקות, והצטבר לחיוב אמיתי.
+# עכשיו: /settings נקרא רק בשני המפתחות ש-render באמת צורך (HEBCAL_GATE_ENABLED
+# + SHABBAT_DETECTION), והקריאות האיטיות-להשתנות (settings + config) יושבות
+# ב-TTL cache של 60ש'. /elevators/{id} (הקומה החיה, ~90B) נשאר טרי בכל קריאה.
+_TTL_S = 60.0
+_ttl_cache: dict = {}   # key -> (fetched_at, value)
+
+# המפתחות היחידים מ-/settings שהתצוגה משתמשת בהם. מפתח שערכו null לא נכנס
+# לתוצאה - כדי ש-settings.get("HEBCAL_GATE_ENABLED", True) ישמור על ברירת המחדל.
+_SETTINGS_KEYS = ("HEBCAL_GATE_ENABLED", "SHABBAT_DETECTION")
+
+
+def _ttl_get(key: str, fetch_fn):
+    now = time.time()
+    hit = _ttl_cache.get(key)
+    if hit is not None and (now - hit[0]) < _TTL_S:
+        return hit[1]
+    val = fetch_fn()
+    _ttl_cache[key] = (now, val)
+    return val
+
+
+def _fetch_settings_narrow(base_url: str) -> dict:
+    out = {}
+    for key in _SETTINGS_KEYS:
+        val = requests.get(f"{base_url}/settings/{key}.json", timeout=5).json()
+        if val is not None:
+            out[key] = val
+    return out
+
+
 def fetch_status(base_url: str, elevator_id: str) -> dict:
     out = {}
     try:
-        r = requests.get(f"{base_url}/elevator_configs/{elevator_id}.json", timeout=5)
-        out["config"] = r.json() or {}
+        out["config"] = _ttl_get(
+            f"config:{elevator_id}",
+            lambda: (requests.get(f"{base_url}/elevator_configs/{elevator_id}.json", timeout=5).json() or {}),
+        )
     except Exception as e:
         out["error"] = str(e)
     try:
@@ -74,8 +110,7 @@ def fetch_status(base_url: str, elevator_id: str) -> dict:
     except Exception:
         out["elevator"] = {}
     try:
-        r = requests.get(f"{base_url}/settings.json", timeout=5)
-        out["settings"] = r.json() or {}
+        out["settings"] = _ttl_get("settings", lambda: _fetch_settings_narrow(base_url))
     except Exception:
         out["settings"] = {}
     return out
