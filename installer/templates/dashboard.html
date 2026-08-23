@@ -47,6 +47,18 @@
     <div class="log" id="logView" style="margin-top:10px;height:220px;"></div>
   </div>
 </div>
+
+<!-- מצב שינה: הדף נפתח אוטומטית בבוט על כל Pi ואיש לא מסתכל בו רוב הזמן -
+     אחרי 2 דקות בלי פעילות מפסיקים למשוך נתונים (Firebase דרך /api/status)
+     עד לחיצה על רענון. חוסך רוחב-פס אמיתי בצי שלם של מכשירים. -->
+<div id="sleepOverlay" style="position:fixed;inset:0;z-index:900;display:none;align-items:center;justify-content:center;text-align:center;background:rgba(8,12,20,.9);backdrop-filter:blur(3px);color:#e8eefc;padding:20px;">
+  <div>
+    <div style="font-size:52px;margin-bottom:8px;">😴</div>
+    <h3 style="margin:0 0 8px;">מצב שינה - הדשבורד הפסיק למשוך נתונים</h3>
+    <p style="opacity:.75;margin:0 0 18px;">לא זוהתה פעילות במשך 2 דקות. הנתונים על המסך קפואים.</p>
+    <button id="sleepWake" style="font-size:16px;padding:10px 22px;cursor:pointer;">🔄 רענן והמשך</button>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -177,9 +189,35 @@ async function rpiSignin(btn) {
   btn.disabled = false; setTimeout(refreshRpi, 3000);
 }
 
+// --- מצב שינה (חיסכון ברוחב-פס) ---
+// כל refresh מפעיל בצד השרת קריאות Firebase (monitor.fetch_status). כשהדף
+// רץ 24/7 על מסך ה-Pi בלי צופה - זו משיכה מתמדת לחינם. אחרי SLEEP_IDLE_MS
+// בלי אינטראקציה נכנסים לשינה עד לחיצה מפורשת על הרענון.
+const SLEEP_IDLE_MS = 2 * 60 * 1000;
+let sleeping = false;
+let lastUserActivity = Date.now();
+['pointerdown','pointermove','keydown','wheel','touchstart'].forEach(ev =>
+  window.addEventListener(ev, () => { lastUserActivity = Date.now(); }, { passive: true }));
+function goToSleep() {
+  if (sleeping) return;
+  sleeping = true;
+  document.getElementById('sleepOverlay').style.display = 'flex';
+}
+function wakeUp() {
+  if (!sleeping) return;
+  sleeping = false;
+  lastUserActivity = Date.now();
+  document.getElementById('sleepOverlay').style.display = 'none';
+  refresh(); refreshRpi();
+}
+document.getElementById('sleepWake').onclick = wakeUp;
+setInterval(() => {
+  if (!sleeping && Date.now() - lastUserActivity >= SLEEP_IDLE_MS) goToSleep();
+}, 10000);
+
 renderLegend();
 loadInstallInfo();
-refresh(); setInterval(refresh, 5000); showLog('detector');
-refreshRpi(); setInterval(refreshRpi, 10000);
+refresh(); setInterval(() => { if (!sleeping) refresh(); }, 5000); showLog('detector');
+refreshRpi(); setInterval(() => { if (!sleeping) refreshRpi(); }, 10000);
 </script>
 {% endblock %}

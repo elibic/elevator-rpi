@@ -24,6 +24,9 @@ log = logging.getLogger(__name__)
 # so a fleet-wide Firebase blip does not have every Pi reconnect in lockstep (#24).
 _RECONNECT_BASE = 2
 _RECONNECT_CAP = 60
+# חיבור SSE שחי לפחות כך-וכך שניות נחשב "בריא" ומאפס את מונה ה-backoff.
+# קצר מזה = ריצוד (החיבור נופל מיד אחרי ה-put הראשוני) והמונה ממשיך לטפס.
+_STREAM_HEALTHY_S = 30.0
 
 
 class FirebaseClient:
@@ -128,15 +131,20 @@ class FirebaseClient:
         last_floor: Optional[str] = None
         attempt = 0
         while True:
+            # איפוס ה-backoff לפי אורך-חיי החיבור בלבד (ראה _stream_loop):
+            # איפוס-על-נתונים איפשר לחיבור שרועד (מתנתק כל כמה שניות אחרי
+            # ה-put הראשוני / אירוע קומה) להתחבר-מחדש בקצב מלא לנצח.
+            started = time.monotonic()
             try:
                 for raw in self._sse_stream(url):
                     floor = str(raw.get("floor", "")) if raw.get("floor") is not None else None
                     if floor and floor != last_floor:
                         last_floor = floor
-                        attempt = 0   # healthy data - reset reconnect backoff
                         yield raw
             except Exception as e:
                 log.warning("Elevator stream error: %s", e)
+            if time.monotonic() - started >= _STREAM_HEALTHY_S:
+                attempt = 0   # the stream held long enough - it was healthy
             delay = self._backoff_delay(attempt)
             attempt += 1
             log.warning("Elevator stream reconnecting in %.0fs", delay)
@@ -255,16 +263,25 @@ class FirebaseClient:
         return base / 2.0 + random.uniform(0.0, base / 2.0)
 
     def _stream_loop(self, path: str, callback) -> None:
-        """Background loop for config/settings SSE streams."""
+        """Background loop for config/settings SSE streams.
+
+        חשוב (1.1.11): ה-backoff מתאפס רק כשהחיבור החזיק מעמד לפחות
+        _STREAM_HEALTHY_S - לא על קבלת נתונים. Firebase שולח put מלא של הצומת
+        בכל התחברות, כך שאיפוס-על-קבלה (הקוד הישן) איפשר לחיבור שרועד להתחבר-
+        מחדש כל 1-2 שניות לנצח - ובכל פעם להוריד מחדש את כל העץ (למשל כל
+        /settings). זו בדיוק משפחת-הבאגים שיצרה את חריגת רוחב-הפס בקיוסקים.
+        """
         url = f"{self._base}/{path.lstrip('/')}"
         attempt = 0
         while True:
+            started = time.monotonic()
             try:
                 for data in self._sse_stream(url):
-                    attempt = 0   # healthy data - reset reconnect backoff
                     callback(data)
             except Exception as e:
                 log.warning("Background stream error (%s): %s", path, e)
+            if time.monotonic() - started >= _STREAM_HEALTHY_S:
+                attempt = 0   # the stream held long enough - it was healthy
             delay = self._backoff_delay(attempt)
             attempt += 1
             time.sleep(delay)
