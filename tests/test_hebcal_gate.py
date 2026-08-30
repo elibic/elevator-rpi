@@ -87,9 +87,11 @@ def patch_hebcal(monkeypatch, israel_items, diaspora_items=None, fail=False):
         calls.append(dict(params or {}))
         if fail:
             raise ConnectionError("network down")
-        if "geonameid" in (params or {}):
-            return _FakeResponse(israel_items)
-        return _FakeResponse(diaspora_items if diaspora_items is not None else [])
+        # Both calls now carry geonameid (same location, Israeli clock times);
+        # only `i=off` marks the Diaspora holiday scheme.
+        if (params or {}).get("i") == "off":
+            return _FakeResponse(diaspora_items if diaspora_items is not None else [])
+        return _FakeResponse(israel_items)
 
     monkeypatch.setattr(hg.requests, "get", fake_get)
     return calls
@@ -134,13 +136,14 @@ class TestYomTovSheni:
         assert len(calls) == 1                       # Israel only
         gate.is_in_window(SETTINGS, now + 60)        # toggle flipped on
         assert len(calls) == 3                       # Israel + diaspora, inside the TTL
-        assert calls[2].get("i") == "off" and "geonameid" not in calls[2]
+        assert calls[2].get("i") == "off"
+        assert calls[2].get("geonameid") == "281184"   # same location
 
     def test_diaspora_fetch_failure_falls_back_to_israel(self, monkeypatch):
         def fake_get(url, params=None, timeout=None):
-            if "geonameid" in (params or {}):
-                return _FakeResponse(SUKKOT_IL)
-            raise ConnectionError("diaspora endpoint down")
+            if (params or {}).get("i") == "off":
+                raise ConnectionError("diaspora endpoint down")
+            return _FakeResponse(SUKKOT_IL)
 
         monkeypatch.setattr(hg.requests, "get", fake_get)
         gate = HebcalGate()
@@ -337,3 +340,34 @@ class TestBadSettings:
         assert gate.is_in_window(settings, TestOrdinaryWeek.CANDLES - 29 * 60) is True
         assert gate.is_in_window(settings, TestOrdinaryWeek.CANDLES - 31 * 60) is False
         assert gate._diaspora is False
+
+
+class TestDiasporaUsesTheSameLocation:
+    """A hotel in Israel with chutz-la-aretz guests keeps Yom Tov Sheni on
+    ISRAELI clock times.  Only the holiday scheme comes from the Diaspora
+    calendar (i=off) - the location must not change, or the second day would
+    open and close on some other city's sunset."""
+
+    def _params(self, monkeypatch):
+        calls = patch_hebcal(monkeypatch, SUKKOT_IL, SUKKOT_DIASPORA)
+        gate = HebcalGate()
+        gate.is_in_window(SETTINGS, ts("2026-09-26T12:00:00+03:00"))
+        return calls
+
+    def test_both_calls_carry_the_same_geonameid(self, monkeypatch):
+        calls = self._params(monkeypatch)
+        assert len(calls) == 2
+        assert calls[0]["geonameid"] == "281184" and "i" not in calls[0]
+        assert calls[1]["geonameid"] == "281184" and calls[1]["i"] == "off"
+
+    def test_only_the_calendar_differs(self, monkeypatch):
+        calls = self._params(monkeypatch)
+        israel, diaspora = calls
+        assert {k: v for k, v in diaspora.items() if k != "i"} == israel
+
+    def test_custom_location_propagates_to_both(self, monkeypatch):
+        calls = patch_hebcal(monkeypatch, SUKKOT_IL, SUKKOT_DIASPORA)
+        gate = HebcalGate()
+        gate.is_in_window({"GEO_NAME_ID": "294801"},          # Tiberias
+                          ts("2026-09-26T12:00:00+03:00"))
+        assert [c["geonameid"] for c in calls] == ["294801", "294801"]

@@ -131,9 +131,11 @@ class TestFetch:
             calls.append(dict(params or {}))
             if fail:
                 raise ConnectionError("network down")
-            if "geonameid" in (params or {}):
-                return _FakeResponse(israel_items)
-            return _FakeResponse(diaspora_items or [])
+            # Both calls carry geonameid; only `i=off` marks the Diaspora
+            # holiday scheme (same location, Israeli clock times).
+            if (params or {}).get("i") == "off":
+                return _FakeResponse(diaspora_items or [])
+            return _FakeResponse(israel_items)
 
         monkeypatch.setattr(sw.requests, "get", fake_get)
         return calls
@@ -172,7 +174,8 @@ class TestFetch:
         # YOM_TOV_SHENI absent => enabled (web semantics: !== false)
         assert w.refresh_if_due({"GEO_NAME_ID": "281184"}, now) is True
         assert len(calls) == 2
-        assert calls[1].get("i") == "off" and "geonameid" not in calls[1]
+        assert calls[1].get("i") == "off"
+        assert calls[1].get("geonameid") == "281184"   # same location
         # Sunday inside the diaspora-only second day
         assert w.is_active(extra_start + 3600, 100, 60) is True
 
@@ -236,3 +239,19 @@ class TestDecideWrite:
     def test_manual_write_healed_after_grace(self):
         # someone flipped the DB to False 10 minutes after our True write
         assert decide_write(True, False, True, 400.0, now=1000.0) is True
+
+
+class TestDiasporaUsesTheSameLocation:
+    """Yom Tov Sheni in an Israeli hotel runs on Israeli clock times: the
+    secondary fetch changes the holiday scheme (i=off), never the location."""
+
+    def test_both_calls_carry_the_same_geonameid(self, monkeypatch):
+        calls = TestFetch()._patch(
+            monkeypatch,
+            [{"category": "candles", "date": _iso(CANDLES)}],
+            [{"category": "candles", "date": _iso(CANDLES)}],
+        )
+        w = ScheduleWindows()
+        w.refresh_if_due({"GEO_NAME_ID": "294801"}, CANDLES - 24 * 3600)
+        assert [c["geonameid"] for c in calls] == ["294801", "294801"]
+        assert "i" not in calls[0] and calls[1]["i"] == "off"

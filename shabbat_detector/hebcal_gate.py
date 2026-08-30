@@ -180,12 +180,16 @@ class HebcalGate:
         params["geonameid"] = geo
         self._parse_items(self._get_items(params), starts, ends)
 
-        # Secondary: the Diaspora calendar (Yom Tov Sheni).  Tolerated failure -
-        # web parity (respDiaspora.ok), and the union means a miss can only
-        # narrow the gate back to the Israel calendar.
+        # Secondary: the Diaspora HOLIDAY SCHEME at the SAME location.  The
+        # customer is a hotel in Israel whose chutz-la-aretz guests keep Yom Tov
+        # Sheni on Israeli clock times, so only the calendar changes (i=off) -
+        # geonameid stays, or the second day would arrive with another city's
+        # sunset.  Tolerated failure: the union means a miss can only narrow the
+        # gate back to the Israel calendar.
         if diaspora:
             try:
                 params = dict(base_params)
+                params["geonameid"] = geo
                 params["i"] = "off"
                 self._parse_items(self._get_items(params), starts, ends)
             except Exception as e:

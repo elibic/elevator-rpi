@@ -220,11 +220,15 @@ class ScheduleWindows:
         params["geonameid"] = geo
         self._parse_items(self._get_items(params), starts, ends)
 
-        # Secondary fetch: Diaspora calendar (Yom Tov Sheni).  Tolerated
-        # failure - web parity (respDiaspora.ok check).
+        # Secondary fetch: the Diaspora HOLIDAY SCHEME at the SAME location.
+        # geonameid stays and only `i` changes: a hotel in Israel whose
+        # chutz-la-aretz guests keep Yom Tov Sheni does so on Israeli clock
+        # times, so dropping the location would import another city's sunset.
+        # Tolerated failure - web parity (respDiaspora.ok check).
         if diaspora:
             try:
                 params = dict(base_params)
+                params["geonameid"] = geo
                 params["i"] = "off"
                 self._parse_items(self._get_items(params), starts, ends)
             except Exception as e:
