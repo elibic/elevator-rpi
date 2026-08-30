@@ -375,3 +375,95 @@ class TestCycleFactorZeroDisables:
         # both post-window paths are explicitly disabled.
         assert fsm.check_post_window_exit(now + 5 * HOUR, False, CONFIG_B) is None
         assert fsm.state == DetectorState.SHABBAT
+
+
+# ── Mechanism 4 wired to the real Hebcal gate ────────────────────────────────
+# Sukkot 5787 fixtures live with the gate's own tests.
+from datetime import datetime  # noqa: E402
+
+from shabbat_detector.hebcal_gate import HebcalGate  # noqa: E402
+from test_hebcal_gate import (  # noqa: E402
+    SAT_HAVDALAH,
+    SUKKOT_DIASPORA,
+    SUKKOT_IL,
+    SUN_HAVDALAH,
+    patch_hebcal,
+)
+from test_hebcal_gate import ts as _ts  # noqa: E402
+
+
+class TestHardExitAcrossYomTovSheni:
+    """POST_WINDOW_HARD_EXIT_MIN leaves Shabbat mode on the clock alone, counted
+    from the moment the Hebcal window closes.
+
+    Before the gate honoured YOM_TOV_SHENI that window closed on the Israel
+    calendar, so any non-zero hard deadline evicted the elevator on motzaei
+    Shabbat of a Yom Tov Sheni - and the still-closed gate then blocked
+    re-entry (fsm: "שבת זוהתה מחוץ לחלון הלכתי - מתעלם") for the whole second
+    day.  Sukkot 5787: Shabbat + Sukkot I on 26/9, Sukkot II on Sunday 27/9 in
+    the diaspora only.
+    """
+
+    SETTINGS_HARD = {
+        "GEO_NAME_ID": "281184",
+        "SHABBAT_DETECTION": dict(
+            SETTINGS["SHABBAT_DETECTION"], POST_WINDOW_HARD_EXIT_MIN=5
+        ),
+    }
+
+    def _run(self, monkeypatch, settings):
+        """Tick the watchdog every 5 minutes across the weekend.
+
+        Returns (exit_ts, reason) for the first exit, or (None, None).
+        """
+        patch_hebcal(monkeypatch, SUKKOT_IL, SUKKOT_DIASPORA)
+        gate = HebcalGate()
+        start = _ts("2026-09-25T18:30:00+03:00")
+        fsm = make_fsm(settings, entered_at=start)
+
+        now = start
+        while now <= _ts("2026-09-28T02:00:00+03:00"):
+            result = fsm.check_post_window_exit(
+                now, gate.is_in_window(settings, now), CONFIG_B
+            )
+            if result is not None:
+                return now, result.reason_he
+            now += 300
+        return None, None
+
+    def test_stays_in_shabbat_for_the_whole_second_day(self, monkeypatch):
+        exit_at, reason = self._run(monkeypatch, self.SETTINGS_HARD)
+        assert exit_at is not None, "the hard deadline must still fire eventually"
+        # Not one tick early: the diaspora second day is protected end to end.
+        assert exit_at > SUN_HAVDALAH, (
+            f"evicted at {datetime.fromtimestamp(exit_at)}, "
+            "before the diaspora havdalah"
+        )
+        assert "מגבלת זמן קשיחה" in reason
+
+    def test_exit_lands_just_after_the_diaspora_window_closes(self, monkeypatch):
+        exit_at, _ = self._run(monkeypatch, self.SETTINGS_HARD)
+        window_close = SUN_HAVDALAH + 120 * 60          # AFTER default
+        assert window_close < exit_at <= window_close + 15 * 60
+
+    def test_toggle_off_keeps_the_israel_only_behaviour(self, monkeypatch):
+        """The discriminating case: with YOM_TOV_SHENI off nothing protects the
+        second day, which is the pre-fix behaviour - now an explicit choice."""
+        settings = dict(self.SETTINGS_HARD, YOM_TOV_SHENI=False)
+        exit_at, _ = self._run(monkeypatch, settings)
+        assert exit_at is not None
+        assert exit_at < SAT_HAVDALAH + 3 * HOUR
+
+    def test_hard_exit_off_is_unaffected(self, monkeypatch):
+        """The fleet default (0 = disabled) must behave as before either way."""
+        settings = {
+            "GEO_NAME_ID": "281184",
+            "SHABBAT_DETECTION": dict(
+                SETTINGS["SHABBAT_DETECTION"],
+                POST_WINDOW_HARD_EXIT_MIN=0,
+                POST_WINDOW_ANOMALIES_FOR_EXIT=0,
+                POST_WINDOW_CYCLE_FACTOR=0,
+            ),
+        }
+        exit_at, _ = self._run(monkeypatch, settings)
+        assert exit_at is None
