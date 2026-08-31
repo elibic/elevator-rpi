@@ -46,6 +46,22 @@ DEFAULT_BEFORE_MIN = 100.0
 DEFAULT_AFTER_MIN = 60.0
 
 VALID_SOURCES = ("auto", "schedule", "none")
+# Hebcal FORCES i=on whenever it can tell the location is in Israel, and it
+# decides that from the TZID: geonameid=281184 and even raw Jerusalem
+# coordinates with tzid=Asia/Jerusalem both come back with the Israel scheme
+# and "i=on" echoed in every item link (verified against the live API,
+# 2026-08-31).  The Diaspora scheme is only served for a location whose tzid is
+# not Israel's - hence geo=pos with the SAME coordinates and a stand-in tzid.
+#
+# This does not move any time.  Hebcal derives candle lighting and havdalah
+# from the latitude/longitude, then merely RENDERS them in the given tzid, and
+# every timestamp carries its UTC offset ("2026-09-27T19:06:00+03:00") which we
+# always parse.  Measured on Sukkot 5787: the Israel fetch put havdalah at
+# 2026-09-26T19:07:00+03:00 and the geo=pos fetch put the second day's candle
+# lighting at the very same instant.  Athens is the stand-in because it shares
+# Israel's UTC offset in all but a couple of days each spring, so logs stay
+# readable; correctness does not depend on that.
+_DIASPORA_TZID = "Europe/Athens"
 
 
 def _unwrap(v):
@@ -112,12 +128,42 @@ def decide_write(
     return True
 
 
+def diaspora_params(base_params: dict, israel_response: dict) -> dict:
+    """Params for the Diaspora-scheme fetch at the primary response's own
+    coordinates.  Raises when the response carries no usable location, so the
+    caller's tolerated-failure path skips the second calendar rather than
+    silently querying somewhere else."""
+    loc = (israel_response or {}).get("location") or {}
+    lat, lon = loc.get("latitude"), loc.get("longitude")
+    if lat is None or lon is None:
+        raise ValueError("Hebcal response carried no latitude/longitude")
+    params = dict(base_params)
+    params.update({
+        "geo": "pos",
+        "latitude": str(lat),
+        "longitude": str(lon),
+        "tzid": _DIASPORA_TZID,
+        "i": "off",
+    })
+    return params
+
+
 class ScheduleWindows:
     """Fetches, caches and persists Shabbat/Yom-Tov window lists from Hebcal."""
 
     def __init__(self):
         self._starts: list[float] = []   # candle-lighting / yomtov starts (epoch s)
         self._ends: list[float] = []     # havdalah ends (epoch s)
+        # The Diaspora calendar is kept SEPARATE, never merged into the lists
+        # above.  Merging looked harmless but truncated the chain: on the
+        # motzaei Shabbat of a Yom Tov Sheni the Israel havdalah lands in the
+        # shared end list, becomes the "earliest end after the active start",
+        # and closes a window that the Diaspora calendar keeps open - a ~2 hour
+        # hole in the middle of the second night (reproduced against the live
+        # Hebcal payloads for Sukkot 5787).  Evaluating each calendar on its
+        # own and OR-ing the answers is what the web does, and it cannot hole.
+        self._d_starts: list[float] = []
+        self._d_ends: list[float] = []
         self._fetched_at: float = 0.0    # epoch s of last SUCCESSFUL fetch
         self._last_attempt: float = 0.0  # epoch s of last fetch attempt
         self._geo: str = ""
@@ -129,6 +175,8 @@ class ScheduleWindows:
         return {
             "starts": list(self._starts),
             "ends": list(self._ends),
+            "d_starts": list(self._d_starts),
+            "d_ends": list(self._d_ends),
             "fetched_at": self._fetched_at,
             "geo": self._geo,
             "diaspora": self._diaspora,
@@ -142,6 +190,10 @@ class ScheduleWindows:
         try:
             inst._starts = sorted(float(x) for x in (d.get("starts") or []))
             inst._ends = sorted(float(x) for x in (d.get("ends") or []))
+            # Absent in state files written before the split - an older file
+            # simply restores as "Israel only" and the next fetch fills it in.
+            inst._d_starts = sorted(float(x) for x in (d.get("d_starts") or []))
+            inst._d_ends = sorted(float(x) for x in (d.get("d_ends") or []))
             inst._fetched_at = float(d.get("fetched_at") or 0.0)
             inst._geo = str(d.get("geo") or "")
             inst._diaspora = bool(d.get("diaspora", True))
@@ -180,7 +232,7 @@ class ScheduleWindows:
         self._last_attempt = now
 
         try:
-            starts, ends = self._fetch(geo, diaspora, now)
+            starts, ends, d_starts, d_ends = self._fetch(geo, diaspora, now)
         except Exception as e:
             log.warning("Schedule windows fetch failed: %s (keeping stored windows)", e)
             return False
@@ -191,14 +243,20 @@ class ScheduleWindows:
 
         self._starts = sorted(set(starts))
         self._ends = sorted(set(ends))
+        self._d_starts = sorted(set(d_starts))
+        self._d_ends = sorted(set(d_ends))
         self._fetched_at = now
         log.info(
-            "Schedule windows refreshed: %d start(s), %d end(s) (geo=%s, diaspora=%s)",
-            len(self._starts), len(self._ends), geo, diaspora,
+            "Schedule windows refreshed: %d/%d Israel, %d/%d Diaspora "
+            "start(s)/end(s) (geo=%s, diaspora=%s)",
+            len(self._starts), len(self._ends),
+            len(self._d_starts), len(self._d_ends), geo, diaspora,
         )
         return True
 
-    def _fetch(self, geo: str, diaspora: bool, now: float) -> tuple[list[float], list[float]]:
+    def _fetch(
+        self, geo: str, diaspora: bool, now: float
+    ) -> tuple[list[float], list[float], list[float], list[float]]:
         # Anchor the query one day back (web parity: catches a window that
         # already started yesterday).
         anchor = datetime.fromtimestamp(now) - timedelta(days=1)
@@ -206,7 +264,6 @@ class ScheduleWindows:
             "cfg": "json",
             "M": "on",
             "b": "1",
-            "tzid": "Asia/Jerusalem",
             "gy": str(anchor.year),
             "gm": str(anchor.month),
             "gd": str(anchor.day),
@@ -214,33 +271,35 @@ class ScheduleWindows:
 
         starts: list[float] = []
         ends: list[float] = []
+        d_starts: list[float] = []
+        d_ends: list[float] = []
 
         # Primary fetch: Israel calendar for the configured location.
         params = dict(base_params)
         params["geonameid"] = geo
-        self._parse_items(self._get_items(params), starts, ends)
+        params["tzid"] = "Asia/Jerusalem"
+        israel = self._get_json(params)
+        self._parse_items(israel.get("items") or [], starts, ends)
 
-        # Secondary fetch: the Diaspora HOLIDAY SCHEME at the SAME location.
-        # geonameid stays and only `i` changes: a hotel in Israel whose
-        # chutz-la-aretz guests keep Yom Tov Sheni does so on Israeli clock
-        # times, so dropping the location would import another city's sunset.
-        # Tolerated failure - web parity (respDiaspora.ok check).
+        # Secondary fetch: the Diaspora HOLIDAY SCHEME at the SAME coordinates,
+        # taken from the primary response.  Tolerated failure - web parity
+        # (respDiaspora.ok check).
         if diaspora:
             try:
-                params = dict(base_params)
-                params["geonameid"] = geo
-                params["i"] = "off"
-                self._parse_items(self._get_items(params), starts, ends)
+                self._parse_items(
+                    self._get_json(diaspora_params(base_params, israel)).get("items") or [],
+                    d_starts, d_ends,
+                )
             except Exception as e:
                 log.warning("Diaspora schedule fetch failed (ignored): %s", e)
 
-        return starts, ends
+        return starts, ends, d_starts, d_ends
 
     @staticmethod
-    def _get_items(params: dict) -> list:
+    def _get_json(params: dict) -> dict:
         r = requests.get(_HEBCAL_API, params=params, timeout=10)
         r.raise_for_status()
-        return r.json().get("items", []) or []
+        return r.json() or {}
 
     @staticmethod
     def _parse_items(items: list, starts: list[float], ends: list[float]) -> None:
@@ -272,24 +331,50 @@ class ScheduleWindows:
     ) -> Optional[bool]:
         """Is `now` inside a schedule window?
 
-        Exact port of the web checkWindows() pairing with configurable offsets:
+        Each calendar is evaluated on its own and the answers are OR-ed, which
+        is exactly what the web does (checkWindows(israel) || checkWindows
+        (diaspora)).  Never merge the two lists: see the note on _d_starts.
+
+        Returns None ("unknown") when there is no usable data at all: nothing
+        was ever fetched/persisted, or the data is too old to say anything
+        about `now`.  The caller must HOLD the last written state on None -
+        never flip on missing data.
+        """
+        if self._fetched_at and (now - self._fetched_at) > _MAX_DATA_AGE_S:
+            return None
+
+        israel = self._check(self._starts, self._ends, now, before_min, after_min)
+        if israel:
+            return True
+        diaspora = self._check(self._d_starts, self._d_ends, now, before_min, after_min)
+        if diaspora:
+            return True
+        if israel is None and diaspora is None:
+            return None
+        return False
+
+    @staticmethod
+    def _check(
+        starts: list[float],
+        ends: list[float],
+        now: float,
+        before_min: float,
+        after_min: float,
+    ) -> Optional[bool]:
+        """Exact port of the web checkWindows() pairing, with configurable
+        offsets:
         - adjusted start = start - before_min, adjusted end = end + after_min
         - activeStart = the LATEST adjusted start <= now (none => False)
         - relevantEnd = the EARLIEST adjusted end > activeStart
           (found => now <= relevantEnd; missing => 26h safety)
 
-        Returns None ("unknown") when there is no usable data: nothing was
-        ever fetched/persisted, or the data is too old to say anything about
-        `now`.  The caller must HOLD the last written state on None - never
-        flip on missing data.
+        None means this calendar holds no data to answer with.
         """
-        if not self._starts and not self._ends:
-            return None
-        if self._fetched_at and (now - self._fetched_at) > _MAX_DATA_AGE_S:
+        if not starts and not ends:
             return None
 
-        adj_starts = [s - before_min * 60 for s in self._starts]
-        adj_ends = [e + after_min * 60 for e in self._ends]
+        adj_starts = [s - before_min * 60 for s in starts]
+        adj_ends = [e + after_min * 60 for e in ends]
 
         active_start = None
         for s in sorted(adj_starts):

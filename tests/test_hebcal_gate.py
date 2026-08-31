@@ -68,15 +68,26 @@ ROSH_HASHANA_IL = [
 ]
 
 
+# Jerusalem (geonameid 281184) as Hebcal reports it - the primary response is
+# where the Diaspora fetch gets its coordinates from.
+JERUSALEM_LOC = {"title": "Jerusalem, Israel", "tzid": "Asia/Jerusalem",
+                 "latitude": 31.76904, "longitude": 35.21633,
+                 "cc": "IL", "geonameid": 281184}
+
+
 class _FakeResponse:
-    def __init__(self, items):
+    def __init__(self, items, location=JERUSALEM_LOC):
         self._items = items
+        self._location = location
 
     def raise_for_status(self):
         pass
 
     def json(self):
-        return {"items": self._items}
+        body = {"items": self._items}
+        if self._location is not None:
+            body["location"] = self._location
+        return body
 
 
 def patch_hebcal(monkeypatch, israel_items, diaspora_items=None, fail=False):
@@ -137,7 +148,7 @@ class TestYomTovSheni:
         gate.is_in_window(SETTINGS, now + 60)        # toggle flipped on
         assert len(calls) == 3                       # Israel + diaspora, inside the TTL
         assert calls[2].get("i") == "off"
-        assert calls[2].get("geonameid") == "281184"   # same location
+        assert calls[2].get("latitude") == "31.76904"   # same location
 
     def test_diaspora_fetch_failure_falls_back_to_israel(self, monkeypatch):
         def fake_get(url, params=None, timeout=None):
@@ -344,30 +355,71 @@ class TestBadSettings:
 
 class TestDiasporaUsesTheSameLocation:
     """A hotel in Israel with chutz-la-aretz guests keeps Yom Tov Sheni on
-    ISRAELI clock times.  Only the holiday scheme comes from the Diaspora
-    calendar (i=off) - the location must not change, or the second day would
-    open and close on some other city's sunset."""
+    ISRAELI clock times, so only the holiday scheme may come from the Diaspora
+    calendar.
 
-    def _params(self, monkeypatch):
+    Hebcal forces i=on for any location it can tell is in Israel, and it reads
+    that from the tzid - geonameid=281184 AND raw Jerusalem coordinates with
+    tzid=Asia/Jerusalem both come back with Sukkot II as chol ha-moed and
+    "i=on" echoed in the item links (checked against the live API on
+    2026-08-31).  The same coordinates under a non-Israel tzid return the
+    Diaspora scheme, with every timestamp still carrying its real UTC offset -
+    the Israel fetch's havdalah and the geo=pos fetch's second-day candle
+    lighting land on the very same instant.
+    """
+
+    def _params(self, monkeypatch, settings=SETTINGS):
         calls = patch_hebcal(monkeypatch, SUKKOT_IL, SUKKOT_DIASPORA)
         gate = HebcalGate()
-        gate.is_in_window(SETTINGS, ts("2026-09-26T12:00:00+03:00"))
+        gate.is_in_window(settings, ts("2026-09-26T12:00:00+03:00"))
         return calls
 
-    def test_both_calls_carry_the_same_geonameid(self, monkeypatch):
-        calls = self._params(monkeypatch)
-        assert len(calls) == 2
-        assert calls[0]["geonameid"] == "281184" and "i" not in calls[0]
-        assert calls[1]["geonameid"] == "281184" and calls[1]["i"] == "off"
+    def test_primary_asks_for_the_configured_location(self, monkeypatch):
+        israel, _ = self._params(monkeypatch)
+        assert israel["geonameid"] == "281184"
+        assert israel["tzid"] == "Asia/Jerusalem"
+        assert "i" not in israel
 
-    def test_only_the_calendar_differs(self, monkeypatch):
-        calls = self._params(monkeypatch)
-        israel, diaspora = calls
-        assert {k: v for k, v in diaspora.items() if k != "i"} == israel
+    def test_diaspora_repeats_the_primary_coordinates(self, monkeypatch):
+        _, diaspora = self._params(monkeypatch)
+        assert diaspora["geo"] == "pos"
+        assert (diaspora["latitude"], diaspora["longitude"]) == ("31.76904", "35.21633")
+        assert diaspora["i"] == "off"
+        assert "geonameid" not in diaspora
 
-    def test_custom_location_propagates_to_both(self, monkeypatch):
+    def test_diaspora_tzid_is_not_israel(self, monkeypatch):
+        # The whole point: an Israeli tzid makes Hebcal override i=off.
+        _, diaspora = self._params(monkeypatch)
+        assert diaspora["tzid"] != "Asia/Jerusalem"
+        assert not diaspora["tzid"].startswith("Asia/")
+
+    def test_only_location_and_calendar_differ(self, monkeypatch):
+        israel, diaspora = self._params(monkeypatch)
+        location_keys = {"geonameid", "geo", "latitude", "longitude", "tzid", "i"}
+        assert {k: v for k, v in israel.items() if k not in location_keys} == \
+               {k: v for k, v in diaspora.items() if k not in location_keys}
+
+    def test_custom_location_propagates(self, monkeypatch):
+        # The coordinates come from the primary RESPONSE, so a different
+        # GEO_NAME_ID follows through with no extra setting.
         calls = patch_hebcal(monkeypatch, SUKKOT_IL, SUKKOT_DIASPORA)
         gate = HebcalGate()
         gate.is_in_window({"GEO_NAME_ID": "294801"},          # Tiberias
                           ts("2026-09-26T12:00:00+03:00"))
-        assert [c["geonameid"] for c in calls] == ["294801", "294801"]
+        assert calls[0]["geonameid"] == "294801"
+        assert calls[1]["latitude"] == "31.76904"   # whatever the response said
+
+    def test_response_without_coordinates_skips_the_diaspora_call(self, monkeypatch):
+        # No coordinates -> query nothing rather than query somewhere else.
+        def fake_get(url, params=None, timeout=None):
+            calls.append(dict(params or {}))
+            return _FakeResponse(SUKKOT_IL, location=None)
+
+        calls = []
+        monkeypatch.setattr(hg.requests, "get", fake_get)
+        gate = HebcalGate()
+        # Shabbat itself still works off the Israel calendar...
+        assert gate.is_in_window(SETTINGS, ts("2026-09-26T12:00:00+03:00")) is True
+        assert len(calls) == 1
+        # ...and only the second day is lost, exactly as if the fetch failed.
+        assert gate.is_in_window(SETTINGS, ts("2026-09-27T12:00:00+03:00")) is False

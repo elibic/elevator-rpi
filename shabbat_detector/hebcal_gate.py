@@ -47,6 +47,22 @@ _HEBCAL_API = "https://www.hebcal.com/shabbat"
 _DEFAULT_GEO = "281184"      # Jerusalem (Ramada)
 _NO_END_SAFETY_S = 26 * 3600  # start without a havdalah: assume <= 26h (web parity)
 _MAX_DATA_AGE_S = 8 * 24 * 3600  # older than this cannot answer -> fail open
+# Hebcal FORCES i=on whenever it can tell the location is in Israel, and it
+# decides that from the TZID: geonameid=281184 and even raw Jerusalem
+# coordinates with tzid=Asia/Jerusalem both come back with the Israel scheme
+# and "i=on" echoed in every item link (verified against the live API,
+# 2026-08-31).  The Diaspora scheme is only served for a location whose tzid is
+# not Israel's - hence geo=pos with the SAME coordinates and a stand-in tzid.
+#
+# This does not move any time.  Hebcal derives candle lighting and havdalah
+# from the latitude/longitude, then merely RENDERS them in the given tzid, and
+# every timestamp carries its UTC offset ("2026-09-27T19:06:00+03:00") which we
+# always parse.  Measured on Sukkot 5787: the Israel fetch put havdalah at
+# 2026-09-26T19:07:00+03:00 and the geo=pos fetch put the second day's candle
+# lighting at the very same instant.  Athens is the stand-in because it shares
+# Israel's UTC offset in all but a couple of days each spring, so logs stay
+# readable; correctness does not depend on that.
+_DIASPORA_TZID = "Europe/Athens"
 
 
 def _unwrap(v):
@@ -68,6 +84,26 @@ def _num(settings: dict, key: str, default: float) -> float:
     except (TypeError, ValueError):
         log.warning("Bad %s=%r - using %s", key, (settings or {}).get(key), default)
         return default
+
+
+def diaspora_params(base_params: dict, israel_response: dict) -> dict:
+    """Params for the Diaspora-scheme fetch at the primary response's own
+    coordinates.  Raises when the response carries no usable location, so the
+    caller's tolerated-failure path skips the second calendar rather than
+    silently querying somewhere else."""
+    loc = (israel_response or {}).get("location") or {}
+    lat, lon = loc.get("latitude"), loc.get("longitude")
+    if lat is None or lon is None:
+        raise ValueError("Hebcal response carried no latitude/longitude")
+    params = dict(base_params)
+    params.update({
+        "geo": "pos",
+        "latitude": str(lat),
+        "longitude": str(lon),
+        "tzid": _DIASPORA_TZID,
+        "i": "off",
+    })
+    return params
 
 
 class HebcalGate:
@@ -166,7 +202,6 @@ class HebcalGate:
             "cfg": "json",
             "m": 50,
             "lg": "h",
-            "tzid": "Asia/Jerusalem",
             "gy": str(anchor.year),
             "gm": str(anchor.month),
             "gd": str(anchor.day),
@@ -175,33 +210,33 @@ class HebcalGate:
         starts: list[float] = []
         ends: list[float] = []
 
-        # Primary: the configured location (Israel calendar).
+        # Primary: the configured location, Israel calendar.
         params = dict(base_params)
         params["geonameid"] = geo
-        self._parse_items(self._get_items(params), starts, ends)
+        params["tzid"] = "Asia/Jerusalem"
+        israel = self._get_json(params)
+        self._parse_items(israel.get("items") or [], starts, ends)
 
-        # Secondary: the Diaspora HOLIDAY SCHEME at the SAME location.  The
-        # customer is a hotel in Israel whose chutz-la-aretz guests keep Yom Tov
-        # Sheni on Israeli clock times, so only the calendar changes (i=off) -
-        # geonameid stays, or the second day would arrive with another city's
-        # sunset.  Tolerated failure: the union means a miss can only narrow the
-        # gate back to the Israel calendar.
+        # Secondary: the Diaspora HOLIDAY SCHEME at the SAME coordinates, which
+        # the primary response hands us - so no new setting, and it follows
+        # GEO_NAME_ID automatically.  Tolerated failure: the union means a miss
+        # can only narrow the gate back to the Israel calendar.
         if diaspora:
             try:
-                params = dict(base_params)
-                params["geonameid"] = geo
-                params["i"] = "off"
-                self._parse_items(self._get_items(params), starts, ends)
+                self._parse_items(
+                    self._get_json(diaspora_params(base_params, israel)).get("items") or [],
+                    starts, ends,
+                )
             except Exception as e:
                 log.warning("Diaspora Hebcal fetch failed (ignored): %s", e)
 
         return starts, ends
 
     @staticmethod
-    def _get_items(params: dict) -> list:
+    def _get_json(params: dict) -> dict:
         r = requests.get(_HEBCAL_API, params=params, timeout=10)
         r.raise_for_status()
-        return r.json().get("items", []) or []
+        return r.json() or {}
 
     @staticmethod
     def _parse_items(items: list, starts: list[float], ends: list[float]) -> None:

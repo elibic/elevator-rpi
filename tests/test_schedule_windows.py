@@ -108,15 +108,23 @@ class TestPersistenceRoundtrip:
         assert ScheduleWindows.from_dict({"starts": "junk"}).to_dict()["starts"] == []
 
 
+JERUSALEM_LOC = {"title": "Jerusalem, Israel", "tzid": "Asia/Jerusalem",
+                 "latitude": 31.76904, "longitude": 35.21633, "cc": "IL"}
+
+
 class _FakeResponse:
-    def __init__(self, items):
+    def __init__(self, items, location=JERUSALEM_LOC):
         self._items = items
+        self._location = location
 
     def raise_for_status(self):
         pass
 
     def json(self):
-        return {"items": self._items}
+        body = {"items": self._items}
+        if self._location is not None:
+            body["location"] = self._location
+        return body
 
 
 def _iso(t: float) -> str:
@@ -175,7 +183,7 @@ class TestFetch:
         assert w.refresh_if_due({"GEO_NAME_ID": "281184"}, now) is True
         assert len(calls) == 2
         assert calls[1].get("i") == "off"
-        assert calls[1].get("geonameid") == "281184"   # same location
+        assert calls[1].get("latitude") == "31.76904"   # same location
         # Sunday inside the diaspora-only second day
         assert w.is_active(extra_start + 3600, 100, 60) is True
 
@@ -253,5 +261,133 @@ class TestDiasporaUsesTheSameLocation:
         )
         w = ScheduleWindows()
         w.refresh_if_due({"GEO_NAME_ID": "294801"}, CANDLES - 24 * 3600)
-        assert [c["geonameid"] for c in calls] == ["294801", "294801"]
-        assert "i" not in calls[0] and calls[1]["i"] == "off"
+        assert calls[0]["geonameid"] == "294801" and "i" not in calls[0]
+        # The Diaspora call repeats the primary response's coordinates.
+        assert calls[1]["geo"] == "pos" and calls[1]["i"] == "off"
+        assert (calls[1]["latitude"], calls[1]["longitude"]) == ("31.76904", "35.21633")
+        assert calls[1]["tzid"] != "Asia/Jerusalem"
+
+
+# ── Recorded live Hebcal payloads, Sukkot 5787 (fetched 2026-08-31) ──────────
+# Trimmed to the fields the parser reads.  These are the real responses, so the
+# tests below pin the actual API contract rather than an assumed one.
+_JLM = {"title": "Jerusalem, Israel", "tzid": "Asia/Jerusalem",
+        "latitude": 31.76904, "longitude": 35.21633, "cc": "IL", "geonameid": 281184}
+
+# geonameid=281184 - Israel scheme.  Sukkot II comes back as chol ha-moed and
+# there is no Sunday havdalah.
+REAL_ISRAEL = {"location": _JLM, "items": [
+    {"title": "Erev Sukkot", "date": "2026-09-25", "category": "holiday"},
+    {"title": "Candle lighting: 18:31", "date": "2026-09-25T18:31:00+03:00", "category": "candles"},
+    {"title": "Sukkot I", "date": "2026-09-26", "category": "holiday", "yomtov": True},
+    {"title": "Havdalah: 19:07", "date": "2026-09-26T19:07:00+03:00", "category": "havdalah"},
+    {"title": "Sukkot II (CH''M)", "date": "2026-09-27", "category": "holiday"},
+    {"title": "Sukkot III (CH''M)", "date": "2026-09-28", "category": "holiday"},
+]}
+
+# geo=pos at the SAME coordinates with a non-Israel tzid - Diaspora scheme.
+# Note the second-day candle lighting lands on the exact instant of the Israel
+# fetch's havdalah: same sunset, different calendar.
+REAL_DIASPORA = {"location": {"tzid": "Europe/Athens", "latitude": 31.76904,
+                              "longitude": 35.21633, "geo": "pos"}, "items": [
+    {"title": "Erev Sukkot", "date": "2026-09-25", "category": "holiday"},
+    {"title": "Candle lighting: 6:31pm", "date": "2026-09-25T18:31:00+03:00", "category": "candles"},
+    {"title": "Sukkot I", "date": "2026-09-26", "category": "holiday", "yomtov": True},
+    {"title": "Candle lighting: 7:07pm", "date": "2026-09-26T19:07:00+03:00", "category": "candles"},
+    {"title": "Sukkot II", "date": "2026-09-27", "category": "holiday", "yomtov": True},
+    {"title": "Havdalah: 7:06pm", "date": "2026-09-27T19:06:00+03:00", "category": "havdalah"},
+    {"title": "Sukkot III (CH''M)", "date": "2026-09-28", "category": "holiday"},
+]}
+
+CHAIN_START = ts("2026-09-25T18:31:00+03:00")   # Friday candle lighting
+IL_HAVDALAH = ts("2026-09-26T19:07:00+03:00")   # Israel: motzaei Shabbat
+CHAIN_END = ts("2026-09-27T19:06:00+03:00")     # Diaspora: end of the 2nd day
+
+
+class _JsonResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._body
+
+
+def _patch_real(monkeypatch):
+    def fake_get(url, params=None, timeout=None):
+        return _JsonResponse(REAL_DIASPORA if (params or {}).get("i") == "off"
+                             else REAL_ISRAEL)
+    monkeypatch.setattr(sw.requests, "get", fake_get)
+
+
+class TestRealSukkotPayloads:
+    """The two calendars must never be merged into one start/end list.
+
+    Merged, the Israel havdalah (Sat 19:07) becomes the earliest end after the
+    active start and closes the window while the Diaspora calendar still has
+    the second day open - a ~2 hour hole on the second night, measured at
+    26/9 20:37-22:20 before this fix.
+    """
+
+    def setup_windows(self, monkeypatch):
+        _patch_real(monkeypatch)
+        w = ScheduleWindows()
+        assert w.refresh_if_due({"GEO_NAME_ID": "281184"},
+                                ts("2026-09-25T06:00:00+03:00")) is True
+        return w
+
+    def test_no_hole_anywhere_in_the_chain(self, monkeypatch):
+        w = self.setup_windows(monkeypatch)
+        t = CHAIN_START
+        while t <= CHAIN_END:
+            assert w.is_active(t, 100, 60) is True, datetime.fromtimestamp(t).isoformat()
+            t += 60
+
+    def test_the_motzash_hole_specifically(self, monkeypatch):
+        w = self.setup_windows(monkeypatch)
+        for offset_min in (30, 60, 90, 120, 150, 180, 195):
+            t = IL_HAVDALAH + offset_min * 60
+            assert w.is_active(t, 100, 60) is True, f"+{offset_min}min"
+
+    def test_second_day_is_active(self, monkeypatch):
+        w = self.setup_windows(monkeypatch)
+        assert w.is_active(ts("2026-09-27T12:00:00+03:00"), 100, 60) is True
+
+    def test_closes_after_the_diaspora_havdalah(self, monkeypatch):
+        w = self.setup_windows(monkeypatch)
+        assert w.is_active(CHAIN_END + 59 * 60, 100, 60) is True
+        assert w.is_active(CHAIN_END + 61 * 60, 100, 60) is False
+        assert w.is_active(ts("2026-09-28T09:00:00+03:00"), 100, 60) is False
+
+    def test_toggle_off_ends_at_the_israel_havdalah(self, monkeypatch):
+        _patch_real(monkeypatch)
+        w = ScheduleWindows()
+        w.refresh_if_due({"GEO_NAME_ID": "281184", "YOM_TOV_SHENI": False},
+                         ts("2026-09-25T06:00:00+03:00"))
+        assert w.is_active(IL_HAVDALAH + 30 * 60, 100, 60) is True     # +60 offset
+        assert w.is_active(IL_HAVDALAH + 61 * 60, 100, 60) is False
+        assert w.is_active(ts("2026-09-27T12:00:00+03:00"), 100, 60) is False
+
+    def test_the_two_calendars_stay_apart_in_state(self, monkeypatch):
+        w = self.setup_windows(monkeypatch)
+        d = w.to_dict()
+        assert IL_HAVDALAH in d["ends"]          # Israel havdalah, Israel list
+        assert IL_HAVDALAH not in d["d_ends"]    # never leaks into the Diaspora one
+        assert CHAIN_END in d["d_ends"]
+        assert CHAIN_END not in d["ends"]
+
+    def test_state_survives_a_round_trip(self, monkeypatch):
+        w = self.setup_windows(monkeypatch)
+        restored = ScheduleWindows.from_dict(w.to_dict())
+        t = IL_HAVDALAH + 2 * 3600           # inside the former hole
+        assert restored.is_active(t, 100, 60) is True
+
+    def test_old_state_file_restores_as_israel_only(self):
+        # Written before the split: no d_starts/d_ends keys at all.
+        legacy = {"starts": [CHAIN_START], "ends": [IL_HAVDALAH],
+                  "fetched_at": CHAIN_START, "geo": "281184", "diaspora": True}
+        w = ScheduleWindows.from_dict(legacy)
+        assert w.is_active(CHAIN_START + 3600, 100, 60) is True
+        assert w.is_active(ts("2026-09-27T12:00:00+03:00"), 100, 60) is False
