@@ -36,6 +36,8 @@ jobs:
           sudo chmod o+x /home/runner
           sudo "$RUNNER_TEMP/rpi-image-gen/install_deps.sh"
       - name: Build and audit the image
+        env:
+          CONTROLLER_ADMIN_PUBLIC_KEY: ${{ vars.CONTROLLER_ADMIN_PUBLIC_KEY }}
         run: bash image/build.sh "$RUNNER_TEMP/rpi-image-gen"
       - name: Collect flashable image and checksum
         run: |

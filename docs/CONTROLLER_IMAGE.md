@@ -4,6 +4,8 @@
 
 - One reusable Raspberry Pi 4 arm64 image contains the controller code, Python
   environment, USB driver support and all services before the card is flashed.
+  The initial card uses Ethernet DHCP. Maintenance uses the owner's public SSH
+  key, with a locked password and per-card host keys; no private admin key is baked.
 - The operator connects power and a network, then uses the existing management
   console to select a customer, project and elevator. No credentials are entered
   on the Pi. Project credentials come from the existing protected project record.

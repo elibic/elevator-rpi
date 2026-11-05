@@ -10,7 +10,7 @@ python3 "$SOURCE/install_units.py" "$ROOT"
 # Leave identity generation to systemd and SSH on each actual device.
 truncate -s 0 "$ROOT/etc/machine-id"
 rm -f "$ROOT/etc/ssh/ssh_host_"*
-systemctl --root="$ROOT" disable ssh.service ssh.socket 2>/dev/null || true
+# The official SSH layer enables key-only login and generates host keys at boot.
 ln -sf /usr/share/zoneinfo/Asia/Jerusalem "$ROOT/etc/localtime"
 printf '%s\n' Asia/Jerusalem > "$ROOT/etc/timezone"
 python3 "$SOURCE/audit.py" "$ROOT"

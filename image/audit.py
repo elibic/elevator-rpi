@@ -14,6 +14,16 @@ assert (app/'provisioning/agent.py').exists()
 assert (app/'venv/bin/python').exists()
 assert 'DHCP=yes' in (root/'etc/systemd/network/01-eth0.network').read_text()
 assert (root/'etc/systemd/system/multi-user.target.wants/controller-enrollment.service').is_symlink()
+assert (root/'etc/systemd/system/multi-user.target.wants/ssh.service').is_symlink()
+assert (root/'etc/systemd/system/multi-user.target.wants/ssh-hostkeys-generate.service').is_symlink()
+authorized = (root/'home/eco/.ssh/authorized_keys')
+assert authorized.read_text().strip().startswith('ssh-ed25519 ')
+assert authorized.stat().st_mode & 0o777 == 0o600
+ssh_config = (root/'etc/ssh/sshd_config.d/01pubkey-only.conf').read_text()
+assert 'AuthenticationMethods publickey' in ssh_config and 'PasswordAuthentication no' in ssh_config
+assert not list((root/'home/eco/.ssh').glob('id_*'))
+account = next(line.split(':') for line in (root/'etc/shadow').read_text().splitlines() if line.startswith('eco:'))
+assert account[1].startswith(('!', '*'))
 for unit in (root/'etc/systemd/system').glob('*.service'):
     if unit.is_symlink(): continue
     directives=[line.strip() for line in unit.read_text().splitlines() if line.strip() and not line.lstrip().startswith(('#',';'))]

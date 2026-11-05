@@ -2,7 +2,10 @@ device:
   layer: rpi4
   hostname: econtrol-lift
   user1: eco
-  user1sudo: none
+  user1sudo: nopasswd
+
+ssh:
+  pubkey_only: y
 
 image:
   layer: image-rpios
@@ -13,4 +16,5 @@ image:
 
 layer:
   base: trixie-minbase
+  ssh: openssh-server
   controller: econtrol-controller
