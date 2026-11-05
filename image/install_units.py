@@ -21,7 +21,10 @@ for template in (app / 'systemd').glob('*.service.in'):
         text = text.replace('[Unit]\n', '[Unit]\nConditionPathExists=/opt/elevator-rpi/rfid_config.json\n', 1)
     if name == 'rfid-tracker.service':
         text = '\n'.join(line for line in text.splitlines() if not line.startswith('ExecStartPre=/bin/sh'))+'\n'
-        text = text.replace('[Service]\n','[Service]\nTimeoutStartSec=infinity\nExecStartPre=/opt/elevator-rpi/venv/bin/python -m provisioning.wait_for_reader --config /opt/elevator-rpi/rfid_config.json\n',1)
+        # Wait inside the Type=simple main process. ExecStartPre would hold up
+        # multi-user.target forever on the next boot without a reader.
+        text = text.replace('ExecStart=/opt/elevator-rpi/venv/bin/python -u /opt/elevator-rpi/elevator_tracker_rfid.py',
+            'ExecStart=/opt/elevator-rpi/venv/bin/python -m provisioning.wait_for_reader --config /opt/elevator-rpi/rfid_config.json --tracker /opt/elevator-rpi/elevator_tracker_rfid.py')
     (units / name).write_text(text)
     link = wants / name
     if not link.exists():

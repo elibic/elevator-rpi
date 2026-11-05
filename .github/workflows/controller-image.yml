@@ -2,10 +2,13 @@ name: Build ready-to-assign controller image
 on:
   push:
     branches: [claude/awesome-bohr-j1zr2t]
-    paths: ['image/**', 'provisioning/**', '.github/workflows/controller-image.yml']
+    paths: ['image/**', 'provisioning/**', 'installer/**', 'systemd/**', 'shabbat_detector/**', 'tests/**', 'VERSION', 'elevator_tracker_rfid.py', 'monitor.py', 'setup.sh', '.github/workflows/controller-image.yml']
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: controller-image-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   tests:
     runs-on: ubuntu-24.04

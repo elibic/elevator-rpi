@@ -14,4 +14,12 @@ assert (app/'provisioning/agent.py').exists()
 assert (app/'venv/bin/python').exists()
 assert 'DHCP=yes' in (root/'etc/systemd/network/01-eth0.network').read_text()
 assert (root/'etc/systemd/system/multi-user.target.wants/controller-enrollment.service').is_symlink()
+for unit in (root/'etc/systemd/system').glob('*.service'):
+    if unit.is_symlink(): continue
+    text=unit.read_text()
+    if 'WantedBy=multi-user.target' in text:
+        assert 'After=multi-user.target' not in text
+tracker=(root/'etc/systemd/system/rfid-tracker.service').read_text()
+assert 'ExecStart=/opt/elevator-rpi/venv/bin/python -m provisioning.wait_for_reader' in tracker
+assert 'ExecStartPre=/opt/elevator-rpi/venv/bin/python -m provisioning.wait_for_reader' not in tracker
 print('Image audit passed: application installed; no customer configuration or cloned identity.')

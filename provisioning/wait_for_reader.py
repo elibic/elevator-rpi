@@ -1,7 +1,9 @@
 """An absent reader is a normal wait, not a tracker crash loop."""
 import argparse
 import json
+import os
 import pathlib
+import sys
 import time
 
 def wait(config):
@@ -18,4 +20,7 @@ def wait(config):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', required=True)
-    wait(parser.parse_args().config)
+    parser.add_argument('--tracker', required=True)
+    args = parser.parse_args()
+    wait(args.config)
+    os.execv(sys.executable, [sys.executable, '-u', args.tracker])
