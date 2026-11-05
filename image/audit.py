@@ -16,9 +16,9 @@ assert 'DHCP=yes' in (root/'etc/systemd/network/01-eth0.network').read_text()
 assert (root/'etc/systemd/system/multi-user.target.wants/controller-enrollment.service').is_symlink()
 for unit in (root/'etc/systemd/system').glob('*.service'):
     if unit.is_symlink(): continue
-    text=unit.read_text()
-    if 'WantedBy=multi-user.target' in text:
-        assert 'After=multi-user.target' not in text
+    directives=[line.strip() for line in unit.read_text().splitlines() if line.strip() and not line.lstrip().startswith(('#',';'))]
+    if any(line.startswith('WantedBy=') and 'multi-user.target' in line.split('=',1)[1].split() for line in directives):
+        assert not any(line.startswith('After=') and 'multi-user.target' in line.split('=',1)[1].split() for line in directives)
 tracker=(root/'etc/systemd/system/rfid-tracker.service').read_text()
 assert 'ExecStart=/opt/elevator-rpi/venv/bin/python -m provisioning.wait_for_reader' in tracker
 assert 'ExecStartPre=/opt/elevator-rpi/venv/bin/python -m provisioning.wait_for_reader' not in tracker
