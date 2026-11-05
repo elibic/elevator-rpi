@@ -355,6 +355,8 @@ class FleetAgent:
             "temp_c": read_cpu_temp(),
             **extra,
         }
+        if self._settings.get('CONTROLLER_DEVICE_ID'):
+            fields['controller_device_id'] = self._settings['CONTROLLER_DEVICE_ID']
         if self._test_mode:
             log.info("[test] PATCH /fleet/%s %s", self._id, fields)
             return

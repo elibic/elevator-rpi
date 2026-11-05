@@ -1,0 +1,20 @@
+# METABEGIN
+# X-Env-Layer-Name: econtrol-controller
+# X-Env-Layer-Desc: Ready-to-assign elevator controller with no customer identity.
+# X-Env-Layer-Version: 1.0.0
+# METAEND
+---
+mmdebstrap:
+  packages:
+    - python3
+    - python3-venv
+    - python3-requests
+    - python3-flask
+    - python3-serial
+    - python3-cryptography
+    - procps
+    - psmisc
+    - usbutils
+    - kmod
+    - ca-certificates
+    - tzdata

@@ -3,10 +3,11 @@
 function tagRow(tag, floor) {
   const div = document.createElement('div');
   div.className = 'tag-row';
-  div.innerHTML = `<code class="tag-id">${tag}</code>
-    <span class="muted">→ קומה</span>
-    <input type="text" class="tag-floor" value="${floor || ''}">
-    <button type="button" class="danger" onclick="this.parentElement.remove()">✕</button>`;
+  const code = document.createElement('code'); code.className = 'tag-id'; code.textContent = tag;
+  const label = document.createElement('span'); label.className = 'muted'; label.textContent = '→ קומה';
+  const input = document.createElement('input'); input.type = 'text'; input.className = 'tag-floor'; input.value = floor ?? '';
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger'; remove.textContent = '✕'; remove.onclick = () => div.remove();
+  div.append(code, label, input, remove);
   return div;
 }
 
@@ -61,6 +62,11 @@ function readForm() {
 function populateForm(cfg) {
   const set = (id, val) => { const e = document.getElementById(id); if (e) e.value = val ?? ''; };
   const s = cfg.settings || {};
+  const managed = !!s.CONTROLLER_DEVICE_ID;
+  for (const id of ['firebase_url', 'elevator_id', 'secret_key']) {
+    const field = document.getElementById(id);
+    if (field) { field.readOnly = managed; field.title = managed ? 'פרטי השיוך מנוהלים ממרכז הניהול' : ''; }
+  }
   set('firebase_url', s.FIREBASE_URL); set('elevator_id', s.ELEVATOR_ID);
   set('secret_key', s.SECRET_KEY); set('serial_port', s.SERIAL_PORT || '/dev/ttyUSB0');
   set('baudrate', s.BAUDRATE || 115200);

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$1"
+SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+test -f "$SOURCE/payload.tar"
+install -d "$ROOT/opt/elevator-rpi"
+tar -xf "$SOURCE/payload.tar" -C "$ROOT/opt/elevator-rpi"
+chroot "$ROOT" python3 -m venv --system-site-packages /opt/elevator-rpi/venv
+install -m 0644 "$SOURCE/requirements.txt" "$ROOT/tmp/controller-image-requirements.txt"
+chroot "$ROOT" /opt/elevator-rpi/venv/bin/pip install --disable-pip-version-check \
+  --no-cache-dir --only-binary=:all: --require-hashes -r /tmp/controller-image-requirements.txt
+rm -f "$ROOT/tmp/controller-image-requirements.txt"
+python3 "$SOURCE/install_units.py" "$ROOT"
+# Leave identity generation to systemd and SSH on each actual device.
+truncate -s 0 "$ROOT/etc/machine-id"
+rm -f "$ROOT/etc/ssh/ssh_host_"*
+# The official SSH layer enables key-only login and generates host keys at boot.
+ln -sf /usr/share/zoneinfo/Asia/Jerusalem "$ROOT/etc/localtime"
+printf '%s\n' Asia/Jerusalem > "$ROOT/etc/timezone"
+python3 "$SOURCE/audit.py" "$ROOT"

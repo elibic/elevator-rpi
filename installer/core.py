@@ -356,6 +356,10 @@ class Installer:
         cfg.pop("_comment", None)
         cfg.setdefault("settings", {})
         cfg.setdefault("tags", {})
+        if cfg['settings'].get('CONTROLLER_DEVICE_ID'):
+            protected = ('CONTROLLER_DEVICE_ID', 'FIREBASE_URL', 'ELEVATOR_ID', 'SECRET_KEY')
+            if any(settings.get(key) not in (None, '', cfg['settings'].get(key)) for key in protected):
+                return StepResult('config', False, 'שיוך הבקר מנוהל ממרכז הניהול. שינוי פרויקט או מעלית מתבצע שם.')
         cfg["settings"].update({k: v for k, v in settings.items() if v is not None and v != ""})
         if tags is not None:
             cfg["tags"] = tags

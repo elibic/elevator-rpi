@@ -16,3 +16,7 @@ venv/
 *.log
 *.zip
 *-backups/
+image/payload.tar
+*.img
+*.img.xz
+.pytest_cache/
