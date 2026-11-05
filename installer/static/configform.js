@@ -61,6 +61,11 @@ function readForm() {
 function populateForm(cfg) {
   const set = (id, val) => { const e = document.getElementById(id); if (e) e.value = val ?? ''; };
   const s = cfg.settings || {};
+  const managed = !!s.CONTROLLER_DEVICE_ID;
+  for (const id of ['firebase_url', 'elevator_id', 'secret_key']) {
+    const field = document.getElementById(id);
+    if (field) { field.readOnly = managed; field.title = managed ? 'פרטי השיוך מנוהלים ממרכז הניהול' : ''; }
+  }
   set('firebase_url', s.FIREBASE_URL); set('elevator_id', s.ELEVATOR_ID);
   set('secret_key', s.SECRET_KEY); set('serial_port', s.SERIAL_PORT || '/dev/ttyUSB0');
   set('baudrate', s.BAUDRATE || 115200);

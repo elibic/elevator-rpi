@@ -11,5 +11,7 @@ for pattern in ['var/lib/shabbat_detector/state_*.json','etc/ssh/ssh_host_*','op
     if list(root.glob(pattern)): raise SystemExit('Image contains cloned state: '+pattern)
 assert (root/'etc/machine-id').read_bytes() == b''
 assert (app/'provisioning/agent.py').exists()
+assert (app/'venv/bin/python').exists()
+assert 'DHCP=yes' in (root/'etc/systemd/network/01-eth0.network').read_text()
 assert (root/'etc/systemd/system/multi-user.target.wants/controller-enrollment.service').is_symlink()
 print('Image audit passed: application installed; no customer configuration or cloned identity.')

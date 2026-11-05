@@ -37,7 +37,11 @@ jobs:
       - name: Collect flashable image and checksum
         run: |
           mkdir -p outputs
-          find "$RUNNER_TEMP/rpi-image-gen/work" -type f \( -name '*.img.xz' -o -name '*.img' \) -exec cp {} outputs/ \;
+          find "$RUNNER_TEMP/rpi-image-gen/work" -maxdepth 2 -type f -name '*.img.xz' -exec cp {} outputs/ \;
+          if ! find outputs -name '*.img.xz' -print -quit | grep -q .; then
+            find "$RUNNER_TEMP/rpi-image-gen/work" -maxdepth 2 -type f -name '*.img' -exec cp {} outputs/ \;
+            xz -T0 outputs/*.img
+          fi
           test -n "$(find outputs -name '*.img*' -print -quit)"
           cd outputs
           sha256sum *.img* > SHA256SUMS
