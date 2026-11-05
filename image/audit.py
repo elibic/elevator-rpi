@@ -1,5 +1,6 @@
 """Fail the image build if a card contains a preassigned identity or credentials."""
 import pathlib
+import subprocess
 import sys
 root = pathlib.Path(sys.argv[1])
 app = root / 'opt/elevator-rpi'
@@ -32,4 +33,8 @@ for unit in (root/'etc/systemd/system').glob('*.service'):
 tracker=(root/'etc/systemd/system/rfid-tracker.service').read_text()
 assert 'ExecStart=/opt/elevator-rpi/venv/bin/python -m provisioning.wait_for_reader' in tracker
 assert 'ExecStartPre=/opt/elevator-rpi/venv/bin/python -m provisioning.wait_for_reader' not in tracker
+subprocess.run(['chroot', str(root), '/opt/elevator-rpi/venv/bin/python', '-c',
+    'import requests, serial, flask, sseclient, cryptography; '
+    'import provisioning.agent, shabbat_detector.detector, shabbat_detector.fleet_agent, installer.web'],
+    check=True)
 print('Image audit passed: application installed; no customer configuration or cloned identity.')

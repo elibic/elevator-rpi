@@ -71,6 +71,8 @@ bash image/build.sh /path/to/rpi-image-gen
 
 The image audit rejects cloned device/customer state, machine IDs, SSH host keys
 and private keys, and checks enabled services and key-only maintenance access.
+It imports the service modules inside the target environment, including the
+hash-pinned sseclient-py dependency used for persistent Firebase streaming.
 The application is archived from the committed Git tree, without `.git`, real
 configuration, logs or credentials.
 
