@@ -261,7 +261,7 @@ def _copy_scrubbed(logs_dir: str, dest: str, secret: str,
     return copied, oversized
 
 
-def _sync_to_origin(work: str, branch: str) -> None:
+def _sync_to_origin(work: str, branch: str) -> tuple[bool, str]:
     """Leave the local clone's working branch ready for a fresh commit + push.
 
     If ``origin/<branch>`` is known (the normal case), force the branch to match
@@ -270,22 +270,35 @@ def _sync_to_origin(work: str, branch: str) -> None:
     behind (or got stuck mid-rebase after a past push race) recover on its own
     instead of failing every backup with a non-fast-forward.
 
-    If the branch is not known yet - a brand-new/empty remote on the first backup,
-    or a transient fetch failure - just make sure a local ``<branch>`` is checked
-    out so the later ``push HEAD:<branch>`` can create/advance it. The push is the
-    real arbiter (the caller retries on failure), so a failed fetch here is never
-    fatal on its own."""
+    Fetch with an explicit forced refspec so a rewritten remote branch replaces
+    the cached tracking ref even without an implicit fetch mapping. A failed
+    fetch must never fall back to a stale ref. Only a confirmed absent remote
+    branch (including an empty repo) may prepare a first local commit.
+    Returns ``(ok, detail)``; callers must stop before copying/committing on error.
+    """
     _run(["git", "-C", work, "rebase", "--abort"])         # clear a stuck rebase (no-op otherwise)
     _run(["git", "-C", work, "merge", "--abort"])          # ... or a stuck merge
-    _run(["git", "-C", work, "fetch", "origin", branch])   # rc ignored - the ref check below decides
     ref = f"refs/remotes/origin/{branch}"
+    rc, out = _run(["git", "-C", work, "fetch", "--force", "origin",
+                    f"+refs/heads/{branch}:{ref}"])
+    if rc != 0:
+        # ls-remote exits 2 only when it contacted origin but found no such head.
+        # Network/auth failures must not be mistaken for an empty remote.
+        rc_head, _ = _run(["git", "-C", work, "ls-remote", "--exit-code",
+                           "--heads", "origin", f"refs/heads/{branch}"])
+        if rc_head != 2:
+            return False, f"fetch failed: {_redact(out)[:160]}"
+        rc, out = _run(["git", "-C", work, "checkout", "-B", branch])
+        return rc == 0, f"checkout failed: {_redact(out)[:160]}" if rc else ""
     rc_ref, _ = _run(["git", "-C", work, "rev-parse", "--verify", "--quiet", ref])
-    if rc_ref == 0:                                          # remote branch known -> mirror it exactly
-        _run(["git", "-C", work, "checkout", "-B", branch, f"origin/{branch}"])
-        _run(["git", "-C", work, "reset", "--hard", f"origin/{branch}"])
-        _run(["git", "-C", work, "clean", "-fd"])
-        return
-    _run(["git", "-C", work, "checkout", "-B", branch])    # empty remote / first backup: prepare commit
+    if rc_ref != 0:
+        return False, "fetch succeeded but remote tracking ref is missing"
+    for args in (["checkout", "-B", branch, ref],
+                 ["reset", "--hard", ref], ["clean", "-fd"]):
+        rc, out = _run(["git", "-C", work, *args])
+        if rc != 0:
+            return False, f"{args[0]} failed: {_redact(out)[:160]}"
+    return True, ""
 
 
 def backup_logs(settings: dict, elevator_id: str, logs_dir: str,
@@ -353,7 +366,9 @@ def backup_logs(settings: dict, elevator_id: str, logs_dir: str,
     # idempotent and never conflicts with another Pi's disjoint folder.
     last = ""
     for attempt in range(_PUSH_ATTEMPTS):
-        _sync_to_origin(work, branch)                       # converge onto origin/<branch> (or prep first commit)
+        synced, detail = _sync_to_origin(work, branch)
+        if not synced:
+            return False, detail                           # never commit on a stale tracking ref
 
         copied, oversized = _copy_scrubbed(logs_dir, dest, secret, max_bytes) if have_logs else (0, [])
         # Sanitized config snapshot alongside the logs (idempotent + deterministic,

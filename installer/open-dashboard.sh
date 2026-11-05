@@ -16,7 +16,8 @@ BIN="$(command -v chromium-browser || command -v chromium || true)"
 if [ -n "$BIN" ]; then
   # --app = חלון אפליקציה נקי (בלי שורת כתובת/טאבים) שאפשר לסגור (כפתור x בדף),
   # בניגוד ל--kiosk שחוסם סגירה ומכריח Alt+F4 (ששובר סשן מרוחק).
-  exec "$BIN" --app="$URL" --start-fullscreen --noerrdialogs --disable-infobars --no-first-run
+  exec "$BIN" --app="$URL" --start-fullscreen --noerrdialogs \
+       --disable-infobars --no-first-run --password-store=basic
 fi
 # נפילה אחורה - דפדפן ברירת המחדל (לא מסך מלא).
 exec xdg-open "$URL"

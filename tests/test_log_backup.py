@@ -1,12 +1,15 @@
-"""Tests for the config-snapshot sanitization in shabbat_detector.log_backup.
+"""Tests for config sanitization and disposable-clone recovery in log_backup.
 
 The security contract: the sanitized config snapshot pushed to the (possibly
 shared/public) backup repo must preserve the RFID tag mapping and non-secret
 settings, and must NEVER contain the SECRET_KEY, a PAT/token, or any other
-credential - the repo's hard rule. These tests pin that contract; they are pure
-(no git, no network).
+credential - the repo's hard rule. Git recovery tests use local repositories
+only, without network access.
 """
 import json
+import subprocess
+
+import pytest
 
 from shabbat_detector import log_backup
 
@@ -116,3 +119,100 @@ def test_backup_logs_requires_repo_url():
     ok, detail = log_backup.backup_logs({}, "A", "/nonexistent/logs", "/nonexistent/config.json")
     assert ok is False
     assert "LOG_BACKUP_REPO_URL" in detail
+
+
+def _git(work, *args):
+    return subprocess.run(
+        ["git", "-C", str(work), "-c", "user.name=backup-test",
+         "-c", "user.email=backup-test@example.invalid", *args],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+@pytest.mark.parametrize("implicit_tracking", [True, False])
+def test_backup_recovers_after_origin_history_rewrite(tmp_path, monkeypatch, implicit_tracking):
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    _git(origin, "init", "--bare", "--initial-branch=main")
+    upstream = tmp_path / "upstream"
+    _git(tmp_path, "clone", str(origin), str(upstream))
+    (upstream / "old-history.txt").write_text("discarded history\n")
+    _git(upstream, "add", ".")
+    _git(upstream, "commit", "-m", "Original history")
+    _git(upstream, "push", "origin", "HEAD:main")
+
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "tracker.log").write_text("before rewrite\n")
+    work = tmp_path / "backup"
+    settings = {"LOG_BACKUP_REPO_URL": str(origin), "LOG_BACKUP_DIR": str(work),
+                "LOG_BACKUP_PREFIX": "ramada"}
+    assert log_backup.backup_logs(settings, "C", str(logs))[0]
+    stale = _git(work, "rev-parse", "origin/main")
+
+    _git(upstream, "checkout", "--orphan", "rewritten")
+    _git(upstream, "rm", "-rf", ".")
+    other_pi = upstream / "ramada" / "A"
+    other_pi.mkdir(parents=True)
+    (other_pi / "tracker.log").write_text("keep another Pi's logs\n")
+    _git(upstream, "add", ".")
+    _git(upstream, "commit", "-m", "Rewritten remote history")
+    rewritten = _git(upstream, "rev-parse", "HEAD")
+    _git(upstream, "push", "--force", "origin", "HEAD:main")
+    assert subprocess.run(["git", "-C", str(origin), "merge-base", "--is-ancestor",
+                           stale, rewritten], capture_output=True).returncode == 1
+    if not implicit_tracking:
+        # A cached origin/main must refresh even without an implicit fetch map.
+        _git(work, "config", "--unset-all", "remote.origin.fetch")
+    assert _git(work, "rev-parse", "origin/main") == stale
+    (logs / "tracker.log").write_text("after rewrite\n")
+    real_run = log_backup._run
+    pushes = []
+    def tracked_run(args, cwd=None):
+        if "push" in args:
+            pushes.append(args)
+        return real_run(args, cwd=cwd)
+    monkeypatch.setattr(log_backup, "_run", tracked_run)
+    monkeypatch.setattr(log_backup.time, "sleep", lambda _: None)
+
+    ok, detail = log_backup.backup_logs(settings, "C", str(logs))
+
+    assert ok, detail
+    assert len(pushes) == 1
+    assert _git(origin, "rev-parse", "main^") == rewritten
+    assert _git(origin, "show", "main:ramada/C/tracker.log") == "after rewrite"
+    assert _git(origin, "show", "main:ramada/A/tracker.log") == "keep another Pi's logs"
+    assert not (work / "old-history.txt").exists()
+
+
+def test_sync_fetch_failure_does_not_use_stale_ref(tmp_path, monkeypatch):
+    calls = []
+    def failed_fetch(args, cwd=None):
+        calls.append(args)
+        if "fetch" in args:
+            return 1, "network unavailable"
+        return 0, "cached-ref"
+    monkeypatch.setattr(log_backup, "_run", failed_fetch)
+
+    ok, detail = log_backup._sync_to_origin(str(tmp_path), "main")
+
+    assert not ok
+    assert "fetch failed" in detail and "network unavailable" in detail
+    assert not any("reset" in args or "checkout" in args for args in calls)
+
+
+def test_backup_to_empty_origin(tmp_path):
+    origin = tmp_path / "empty.git"
+    origin.mkdir()
+    _git(origin, "init", "--bare", "--initial-branch=main")
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "tracker.log").write_text("first backup\n")
+    settings = {"LOG_BACKUP_REPO_URL": str(origin),
+                "LOG_BACKUP_DIR": str(tmp_path / "backup"),
+                "LOG_BACKUP_PREFIX": "ramada"}
+
+    ok, detail = log_backup.backup_logs(settings, "C", str(logs))
+
+    assert ok, detail
+    assert _git(origin, "show", "main:ramada/C/tracker.log") == "first backup"

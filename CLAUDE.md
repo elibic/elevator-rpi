@@ -313,6 +313,30 @@
   על היום השני; `YOM_TOV_SHENI=false` ו-`POST_WINDOW_HARD_EXIT_MIN=0` עוברות בשני הצדדים (ביקורת).
   `python3 -m pytest tests/` - 143 עוברות.
 
+## אמינות גיבוי ופתיחת הדשבורד (גרסה 1.1.13)
+- **רפרנס גיבוי מעודכן גם אחרי שכתוב היסטוריה:** `_sync_to_origin` ב-`log_backup.py`
+  מושך עכשיו עם `fetch --force origin +refs/heads/<branch>:refs/remotes/origin/<branch>`.
+  היעד מפורש, כך ש-`origin/<branch>` מתעדכן גם כשאין מיפוי fetch אוטומטי בקלון.
+  קוד החזרה נבדק: כשל fetch לא ממשיך ל-reset/commit מעל רפרנס ישן. רק `ls-remote`
+  שהצליח ואישר שהענף חסר מאפשר קומיט ראשון לריפו ריק. גם checkout/reset/clean נבדקים;
+  השגיאות חוזרות ל-agent בלי להפיל heartbeat, וכתובות עם credentials מסוננות.
+- **Chromium בלי דיאלוג keyring בבוט:** `installer/open-dashboard.sh` מעביר
+  `--password-store=basic`, כך שדפדפן הדשבורד לא מבקש Secret Service. במכשיר שכבר מציג
+  דיאלוג אפשר ליצור `Default Keyring` עם סיסמה ריקה ולהגדירו כברירת המחדל.
+- **בדיקות:** `python3 -m pytest tests/` - 147 עוברות על Linux/Pi, בעותק מבודד תחת `/tmp`
+  ובלי שינוי ה-venv הפעיל. ארבע בדיקות נוספו ב-`tests/test_log_backup.py`: שכתוב היסטוריה
+  עם/בלי מיפוי fetch אוטומטי (התכנסות ב-push יחיד ושימור תיקיית מעלית אחרת), כשל fetch
+  עם רפרנס ישן, וגיבוי ראשון לריפו ריק. `bash -n installer/open-dashboard.sh` תקין.
+- **יומן שטח, 5/11/2026, `Ramada-elve-C` (גישה מ-Windows ב-SSH):** כל ארבעת השירותים פעילים.
+  CP210x מזוהה (`10c4:ea60`), `/dev/ttyUSB0` קיים ופתוח בידי ה-tracker, ויש קריאות תג
+  שממופות לקומה 5 לצד תג `Unknown` שאינו במיפוי. שליחת המצב לענן נדחית ב-`HTTP 401`;
+  השירות אינו ממתין לפורט ואינו קורס בגלל חומרה חסרה. לא שונו מיפויים או סודות.
+- **פעולות מכשיר מתוכננות ומתועדות מחוץ ל-Pi:** קלון הגיבוי `/var/lib/elevator-logs`
+  כבר חסר בבדיקה. הרצת `backup_logs` ידנית תיצור אותו מחדש ותאומת מול הקומיט המרוחק
+  תחת `ramada/C/`. יצירת keyring ריק תבוצע רק אם אין default קיים; ביטול אפשרי במחיקת
+  האוסף החדש דרך Secret Service כל עוד אין בו פריטים. אין שינוי בקובצי boot או ביחידות
+  systemd. תיקוני הקוד נשמרים רק ב-`claude/awesome-bohr-j1zr2t`; `main` לא מתעדכן.
+
 ## התראות
 - **הוסרו מה-Pi.** ההתראות מנוהלות מרכזית מדשבורד האדמין (סקשן **"🔔 התראות"** לכל
   פרויקט) ונשלחות ע"י Google Apps Script (`admin-dashboard/apps-script`) על בסיס המצב
