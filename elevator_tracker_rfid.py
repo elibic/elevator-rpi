@@ -37,6 +37,7 @@ except Exception as _exc:
 # משתנים גלובליים לכתובת הלוגים ומפתח אבטחה - יחושבו/ייטענו בזמן ריצה
 CLOUD_LOGS_URL = None
 SECRET_KEY = None
+CONTROLLER_DEVICE_ID = None
 
 def log_message(message, send_to_cloud=True):
     """
@@ -101,6 +102,8 @@ def send_status_to_server(floor, full_status_url):
             'timestamp': int(time.time()),
             'secret_key': SECRET_KEY
         }
+        if CONTROLLER_DEVICE_ID:
+            data_to_send['controller_device_id'] = CONTROLLER_DEVICE_ID
         
         response = requests.patch(full_status_url, data=json.dumps(data_to_send), timeout=10)
         
@@ -116,7 +119,7 @@ def send_status_to_server(floor, full_status_url):
     return False
 
 def main():
-    global CLOUD_LOGS_URL, SECRET_KEY
+    global CLOUD_LOGS_URL, SECRET_KEY, CONTROLLER_DEVICE_ID
 
     config = load_config()
     if not config: return
@@ -130,6 +133,7 @@ def main():
     BASE_FIREBASE_URL = SETTINGS.get('FIREBASE_URL') 
     ELEVATOR_ID = SETTINGS.get('ELEVATOR_ID') 
     SECRET_KEY = SETTINGS.get('SECRET_KEY') 
+    CONTROLLER_DEVICE_ID = SETTINGS.get('CONTROLLER_DEVICE_ID')
     
     INVENTORY_CMD = b'\xBB\x00\x22\x00\x00\x22\x7E'
 

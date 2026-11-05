@@ -1,0 +1,48 @@
+name: Build ready-to-assign controller image
+on:
+  push:
+    branches: [claude/awesome-bohr-j1zr2t]
+    paths: ['image/**', 'provisioning/**', '.github/workflows/controller-image.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install pytest requests flask pyserial cryptography
+      - run: python -m pytest tests/
+      - run: python -m compileall -q provisioning image
+  image:
+    needs: tests
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the pinned official image builder
+        run: |
+          git clone --depth 1 --branch v2.9.0 https://github.com/raspberrypi/rpi-image-gen.git "$RUNNER_TEMP/rpi-image-gen"
+          test "$(git -C "$RUNNER_TEMP/rpi-image-gen" rev-parse HEAD)" = d2d5705bcb37284c4b08c0ce43c039b1f1004e25
+      - name: Install isolated build dependencies
+        run: |
+          sudo apt-get update
+          sudo chmod o+x /home/runner
+          sudo "$RUNNER_TEMP/rpi-image-gen/install_deps.sh"
+      - name: Build and audit the image
+        run: bash image/build.sh "$RUNNER_TEMP/rpi-image-gen"
+      - name: Collect flashable image and checksum
+        run: |
+          mkdir -p outputs
+          find "$RUNNER_TEMP/rpi-image-gen/work" -type f \( -name '*.img.xz' -o -name '*.img' \) -exec cp {} outputs/ \;
+          test -n "$(find outputs -name '*.img*' -print -quit)"
+          cd outputs
+          sha256sum *.img* > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: econtrol-controller-rpi4-arm64
+          path: outputs/
+          retention-days: 14

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$1"
+SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+test -f "$SOURCE/payload.tar"
+install -d "$ROOT/opt/elevator-rpi"
+tar -xf "$SOURCE/payload.tar" -C "$ROOT/opt/elevator-rpi"
+chroot "$ROOT" python3 -m venv --system-site-packages /opt/elevator-rpi/venv
+python3 "$SOURCE/install_units.py" "$ROOT"
+# Leave identity generation to systemd and SSH on each actual device.
+truncate -s 0 "$ROOT/etc/machine-id"
+rm -f "$ROOT/etc/ssh/ssh_host_"*
+systemctl --root="$ROOT" disable ssh.service ssh.socket 2>/dev/null || true
+ln -sf /usr/share/zoneinfo/Asia/Jerusalem "$ROOT/etc/localtime"
+printf '%s\n' Asia/Jerusalem > "$ROOT/etc/timezone"
+python3 "$SOURCE/audit.py" "$ROOT"

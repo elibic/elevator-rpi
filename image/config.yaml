@@ -1,0 +1,16 @@
+device:
+  layer: rpi4
+  hostname: econtrol-lift
+  user1: eco
+  user1sudo: none
+
+image:
+  layer: image-rpios
+  name: econtrol-controller-rpi4-arm64
+  boot_part_size: 256M
+  root_part_size: 3G
+  compression: xz
+
+layer:
+  base: trixie-minbase
+  controller: econtrol-controller
