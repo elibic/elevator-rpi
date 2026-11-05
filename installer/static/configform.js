@@ -3,10 +3,11 @@
 function tagRow(tag, floor) {
   const div = document.createElement('div');
   div.className = 'tag-row';
-  div.innerHTML = `<code class="tag-id">${tag}</code>
-    <span class="muted">→ קומה</span>
-    <input type="text" class="tag-floor" value="${floor || ''}">
-    <button type="button" class="danger" onclick="this.parentElement.remove()">✕</button>`;
+  const code = document.createElement('code'); code.className = 'tag-id'; code.textContent = tag;
+  const label = document.createElement('span'); label.className = 'muted'; label.textContent = '→ קומה';
+  const input = document.createElement('input'); input.type = 'text'; input.className = 'tag-floor'; input.value = floor ?? '';
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger'; remove.textContent = '✕'; remove.onclick = () => div.remove();
+  div.append(code, label, input, remove);
   return div;
 }
 

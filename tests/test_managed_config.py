@@ -7,7 +7,7 @@ def setup_installer(monkeypatch):
     config={'settings':{'CONTROLLER_DEVICE_ID':'lift-'+'a'*24,
                         'FIREBASE_URL':'https://test.firebaseio.com/elevators.json',
                         'ELEVATOR_ID':'C','SECRET_KEY':'synthetic-new'},'tags':{}}
-    inst=Installer(SimpleNamespace(is_root=False),dry_run=True)
+    inst=Installer(SimpleNamespace(is_root=False,user='eco'),dry_run=True)
     monkeypatch.setattr(inst,'load_config',lambda:copy.deepcopy(config))
     written=[]
     monkeypatch.setattr(inst,'config_path',lambda:'/unused/rfid_config.json')
