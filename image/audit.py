@@ -34,6 +34,7 @@ tracker=(root/'etc/systemd/system/rfid-tracker.service').read_text()
 assert 'ExecStart=/opt/elevator-rpi/venv/bin/python -m provisioning.wait_for_reader' in tracker
 assert 'ExecStartPre=/opt/elevator-rpi/venv/bin/python -m provisioning.wait_for_reader' not in tracker
 subprocess.run(['chroot', str(root), '/opt/elevator-rpi/venv/bin/python', '-c',
+    "import os, sys; os.chdir('/opt/elevator-rpi'); sys.path.insert(0, os.getcwd()); "
     'import requests, serial, flask, sseclient, cryptography; '
     'import provisioning.agent, shabbat_detector.detector, shabbat_detector.fleet_agent, installer.web'],
     check=True)
